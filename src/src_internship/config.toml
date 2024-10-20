@@ -1,0 +1,49 @@
+title = "Config"
+
+[cytomine]
+dataset_path = "../datasets/all/train/"
+project_id = '54149054'
+# list of users to consider for the annotations
+annotation_users_id = ['23245043', '35984253']
+ROI_term_id = '25635386'
+random_shift = 0
+random_state = 42
+zoom_out_factor = 2.0  # Zoom out factor for the crop around the annotation, 1.0 means no zoom out
+
+[sam]
+model_type = 'vit_b'    #'vit_b', 'vit_l', 'vit_h'
+#checkpoint_path = '../checkpoints/test/all_best_model.pt'
+checkpoint_path = '../checkpoints/sam_vit_b_01ec64.pth'
+input_size = 1024
+
+[dataset]
+points = true
+negative_points = true
+box = true
+mask_prompt = true # If true, add a mask as prompt
+negative_points_inside_box = false
+n_points = 10000
+n_neg_points = 10
+points_near_center = 4 # The higher the value, the closer to the center of mask the points have a chance to be. -1 means no restriction
+box_size = 1.0
+random_box_shift = 20 # Random shift in the box position in pixels (simulates the annotation error of an expert)
+mask_prompt_type = 'scribble' #'truth', 'morphology', 'scribble'
+box_around_prompt_mask = false
+
+[evaluate]
+input_mask_eval = false
+valid_dataset_path = "../datasets/all/valid/"
+test_dataset_path = "../datasets/LBTD-AGDC10/test/"
+
+[training]
+batch_size = 4
+epochs = 100
+eval_every_epoch = true # Performs evaluation at the end of each epoch
+lr = 1e-5
+use_img_embeddings = true
+model_save_dir = '../checkpoints/train/'
+train_from_last_checkpoint = false
+
+[misc]
+device = 'cuda' # 'cuda' or 'cpu'
+wandb = true # If true, logs the training in wandb

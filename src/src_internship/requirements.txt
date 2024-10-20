@@ -1,0 +1,15 @@
+cytomine_python_client==3.0.0
+matplotlib==3.7.1
+numpy==1.26.4
+opencv_python==4.9.0.80
+opencv_python_headless==4.7.0.72
+python_box==7.1.1
+scikit_learn==1.2.2
+scipy==1.13.1
+segment_anything==1.0
+Shapely==2.0.4
+tomli==2.0.1
+torch==2.1.0.dev20230606+cu121
+torchvision==0.16.0.dev20230607+cu121
+tqdm==4.66.2
+wandb==0.15.4
