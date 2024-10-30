@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-def collate_fn(batch:list[tuple[dict, np.ndarray]]):
+def collate_fn(batch : list[tuple[dict, np.ndarray]]):
     '''Collate function for torch DataLoader. To use when creating a DataLoader'''
     batched_data = []
     batched_mask = []
