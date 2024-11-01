@@ -17,7 +17,7 @@ IMG_RESOLUTION = 1024
 
 
 def evaluate(dataset_path:str, model_path:str, model_type='vit_b', n_points:int=1, batch_size:int=1, prompt_type:dict={'points':False, 'box':False, 'neg_points':False, 'mask':False}, n_neg_points:int=5, inside_box:bool=False, points_near_center:bool=False, random_box_shift:bool=0, mask_prompt_type:str='truth', box_around_mask:bool=False, input_mask_eval:bool=False, device:str='cuda') -> dict[list]:
-    '''Function to evaluate SAM model. 
+    """Function to evaluate SAM model. 
     dataset_path: str, path to the dataset
     n_points: int, number of points to use in the dataset
     batch_size: int, batch size to use in the evaluation
@@ -31,7 +31,7 @@ def evaluate(dataset_path:str, model_path:str, model_type='vit_b', n_points:int=
     input_mask_eval: bool, if True, evaluate the input mask too
     model_path: str, path to the model
     device: str, device to use for the evaluation
-    Returns: dict, dictionary with the evaluation metrics'''
+    Returns: dict, dictionary with the evaluation metrics"""
     dataset = SAMDataset(dataset_path, prompt_type=prompt_type, n_points=n_points, n_neg_points=n_neg_points, verbose=True, to_dict=True, neg_points_inside_box=inside_box, points_near_center=points_near_center, random_box_shift=random_box_shift, mask_prompt_type=mask_prompt_type, box_around_mask=box_around_mask)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     model = load_model(model_path, model_type)

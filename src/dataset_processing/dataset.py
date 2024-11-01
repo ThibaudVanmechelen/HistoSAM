@@ -1,4 +1,4 @@
-'''Dataset class for SAM dataset to use in PyTorch. Please make sure that your images are 1024x1024 pixels to prevent any problems with the model performances.'''
+"""Dataset class for SAM dataset to use in PyTorch. Please make sure that your images are 1024x1024 pixels to prevent any problems with the model performances."""
 import os
 from abc import ABC, abstractmethod
 from typing import Sequence

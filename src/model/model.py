@@ -16,16 +16,16 @@ from torch import nn
 
 
 class TrainableSam(Sam):
-    '''A trainable version of the Sam that allows backpropagation on the model.
-    Only the forward method differs slightly'''
-    def __init__(self, img_embeddings_as_input: bool = False, return_iou:bool=False, *args, **kwargs):
+    """A trainable version of the Sam that allows backpropagation on the model.
+    Only the forward method differs slightly"""
+
+    def __init__(self, img_embeddings_as_input : bool = False, return_iou : bool = False, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
         self.img_embeddings_as_input = img_embeddings_as_input
         self.return_iou = return_iou
-    def forward(self,
-        batched_input: List[Dict[str, Any]],
-        multimask_output: bool,
-        binary_mask_output: bool = False):
+
+    def forward(self, batched_input : List[Dict[str, Any]], multimask_output: bool, binary_mask_output: bool = False):
         """
         Predicts masks end-to-end from provided images and prompts.
         If prompts are not known in advance, using SamPredictor is
@@ -58,17 +58,24 @@ class TrainableSam(Sam):
               with shape BxCxHxW, where B is the number of input prompts,
               C is determined by multimask_output, and (H, W) is the
               original size of the image.
+
+        What changes in this modified version regarding to the original SAM code is the fact that image embeddings can be reused instead of
+        computing them everytime in order to speed up training. Moreover, the outputs is not a dict anymore, it is just the batch of highest iou
+        masks.
         """
         if self.img_embeddings_as_input:
             input_images = torch.stack([x["image"] for x in batched_input], dim=0).squeeze(0).squeeze(1)
             image_embeddings = input_images
+
         else:
             input_images = torch.stack([self.preprocess(x["image"]) for x in batched_input], dim=0)
             image_embeddings = self.image_encoder(input_images)
+
         outputs = []
         for i, (image_record, curr_embedding) in enumerate(zip(batched_input, image_embeddings)):
             if "point_coords" in image_record:
                 points = (image_record["point_coords"], image_record["point_labels"])
+
             else:
                 points = None
             sparse_embeddings, dense_embeddings = self.prompt_encoder(
@@ -88,45 +95,57 @@ class TrainableSam(Sam):
                 input_size=image_record["original_size"],
                 original_size=image_record["original_size"],
             )
-            outputs.append(masks[0][torch.argmax(iou_predictions)])
+            outputs.append(masks[0][torch.argmax(iou_predictions)]) # outputs the mask with highest iou
 
         outputs = torch.stack(outputs, dim=0)
+
         if binary_mask_output:
-            outputs = torch.where(outputs > self.mask_threshold, 1, 0).float()
+            outputs = torch.where(outputs > self.mask_threshold, 1, 0).float() # make the mask binary (in the original SAM, always binary)
+
         if self.return_iou:
             return outputs, torch.max(iou_predictions)
+        
         return outputs
 
-    def get_image_embeddings(self, batched_input: List[Dict[str, Any]]) -> torch.Tensor:
-        '''Take batch_input and return the image embeddings.'''
+    def get_image_embeddings(self, batched_input : List[Dict[str, Any]]) -> torch.Tensor:
+        """Take batch_input and return the image embeddings."""
         input_images = torch.stack([self.preprocess(x["image"]) for x in batched_input], dim=0)
+
         return self.image_encoder(input_images)
     
-    def get_nb_parameters(self, img_encoder=True):
-        '''Function to get the number of parameters of the model.
+    def get_nb_parameters(self, img_encoder = True):
+        """Function to get the number of parameters of the model.
         img_encoder: bool, If True, return the number of parameters of the image encoder else ignore it. Default: True
-        Returns: int, number of parameters of the model'''
+        Returns: int, number of parameters of the model"""
         if img_encoder:
             return sum(p.numel() for p in self.parameters())
         else:
             return sum(p.numel() for p in self.mask_decoder.parameters()) + sum(p.numel() for p in self.prompt_encoder.parameters())
 
-def load_model(model_path:str, model_type:str='vit_b', img_embeddings_as_input:bool=False, return_iou:bool=False,) -> TrainableSam:
-    '''Function to load a trained model. The function returns a torch.nn.Module model.
+
+def load_model(model_path : str, model_type : str = 'vit_b', img_embeddings_as_input : bool = False, return_iou : bool = False,) -> TrainableSam:
+    """Function to load a trained model. The function returns a torch.nn.Module model.
     model_path: str, path to the model
-    model_type: str in ["vit_b", "vit_h", "vit_l"], type of the model to load. Default: "vit_b"'''
+    model_type: str in ["vit_b", "vit_h", "vit_l"], type of the model to load. Default: "vit_b" """
     if model_type == 'vit_b':
         model = build_sam_vit_b(model_path)
+
     elif model_type == 'vit_h':
         model = build_sam_vit_h(model_path)
+
     elif model_type == 'vit_l':
         model = build_sam_vit_l(model_path)
+
     else:
         raise ValueError(f'Model {model_type} not supported')
-    model.requires_grad_(True)
+
+    model.requires_grad_(True) # to verify later, but is used to require gradients for all param, does not make sense if load model is used only to load the model for evaluation
+    
     model.img_embeddings_as_input = img_embeddings_as_input
     model.return_iou = return_iou
+
     return model
+
 
 def build_sam_vit_h(checkpoint=None):
     return _build_sam(
@@ -224,8 +243,6 @@ def _build_sam(
                 state_dict[key[7:]] = state_dict.pop(key)'''
         sam.load_state_dict(state_dict)
     return sam
-
-
 
 
 if __name__ == '__main__':
