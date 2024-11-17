@@ -1,6 +1,8 @@
 import os
 import shutil
-from random import choice
+
+import random
+from random import choice, shuffle
 from typing import List
 
 from tqdm import tqdm
@@ -38,7 +40,7 @@ def get_img_per_splits(dataset_files : List[str], splits : list = [0.6, 0.2, 0.2
 
     available_split_choice = ['train', 'valid', 'test']
     for splits_key in available_split_choice:
-        if counts[splits_key] == 0:
+        if counts[splits_key] <= 0:
             available_split_choice.remove(splits_key)
     
     while nb_img > len(splits['train']) + len(splits['valid']) + len(splits['test']):
@@ -46,7 +48,7 @@ def get_img_per_splits(dataset_files : List[str], splits : list = [0.6, 0.2, 0.2
         random_split = choice(available_split_choice)
 
         splits[random_split] = splits[random_split] + [int(random_key)] * img_per_slide_count[random_key] # repeat the id of the image (repetition = nb of annnotation)
-        img_per_slide_count[random_key] = 0
+        del img_per_slide_count[random_key]
 
         if len(splits[random_split]) >= counts[random_split]:
             available_split_choice.remove(random_split)
@@ -54,16 +56,19 @@ def get_img_per_splits(dataset_files : List[str], splits : list = [0.6, 0.2, 0.2
     return splits
 
 
-def merge_datasets(root : str, datasets : List[str], verbose : bool = True) -> None:
+def merge_datasets_with_different_splits(root : str, datasets : List[str], 
+                                         datasets_splits : List[List[float]], verbose : bool = True) -> None: # for generalisation TODO update documentation
+    # Note validation set should come from the same datasets use for the training set in order to respoect data distribution, it must not come from the test set.
     """Merge n annotation_wise_scraper dataset into one. Copy them in a new directory.
     It is used to create large scale dataset for training and evaluation.
     root: str, path to the new directory where the datasets will be copied.
     datasets: List[str], list of paths to the datasets to merge."""
     # Copy two first dataset in train and valid
-    for i, dataset_path in tqdm(enumerate((datasets[0], datasets[1])), total = 2, desc = 'Merging datasets', disable = not verbose):
+    for i, dataset_path in tqdm(enumerate(datasets), total = len(datasets), desc = 'Merging datasets', disable = not verbose):
         dataset_files = get_file_path_list(dataset_path)
+        dataset_i_splits = datasets_splits[i]
 
-        splits = get_img_per_splits(dataset_files, splits = [0.8, 0.2, 0.0])
+        splits = get_img_per_splits(dataset_files, splits = dataset_i_splits)
 
         for file_path in tqdm(dataset_files):
             file_name = file_path.split('/')[-1]
@@ -80,27 +85,70 @@ def merge_datasets(root : str, datasets : List[str], verbose : bool = True) -> N
 
             copy_file(file_path, new_file_path)
 
-    # Split the third dataset in train, valid and test. Make sure that img from train, valid and test comes from different whole slide images.
-    dataset_path = datasets[2]
-    dataset_files = get_file_path_list(dataset_path)
-    
-    splits = get_img_per_splits(dataset_files, splits = [0.64, 0.16, 0.2])
+    if verbose:
+        directory = f'{root}/train/processed/'
+        train_count = count_folders(directory)
+        print(f"Number of files in train: {train_count}")
 
-    for file_path in tqdm(dataset_files):
-        file_name = file_path.split('/')[-1]
-        img, _ = file_name.split('_')
+        directory = f'{root}/valid/processed/'
+        valid_count = count_folders(directory)
+        print(f"Number of files in valid: {valid_count}")
 
-        if int(img) in splits['train']:
-            new_file_path = f'{root}/train/processed/2_{file_name}'
+        directory = f'{root}/test/processed/'
+        test_count = count_folders(directory)
+        print(f"Number of files in test: {test_count}")
 
-        elif int(img) in splits['valid']:
-            new_file_path = f'{root}/valid/processed/2_{file_name}'
+        total_nb = train_count + valid_count + test_count
 
-        elif int(img) in splits['test']:
-            new_file_path = f'{root}/test/processed/2_{file_name}'
+        print(f"Total Number of Images: {total_nb}")
+        print(f"Proportions: train {train_count / total_nb:.2f} - valid {valid_count / total_nb:.2f} - test {test_count / total_nb:.2f}")
 
-        copy_file(file_path, new_file_path)
-    
+
+def merge_datasets_with_same_split(root : str, datasets : List[str], verbose : bool = True, splits = [0.6, 0.2, 0.2]) -> None: # for complete training
+    for i, dataset_path in tqdm(enumerate(datasets), total = len(datasets), desc = 'Merging datasets', disable = not verbose):
+        dataset_files = get_file_path_list(dataset_path)
+        splits_counts = get_img_per_splits(dataset_files, splits = splits)
+
+        for file_path in tqdm(dataset_files):
+            file_name = file_path.split('/')[-1]
+            img, _ = file_name.split('_')
+
+            if int(img) in splits_counts['train']:
+                new_file_path = f'{root}/train/processed/{i}_{file_name}'
+
+            elif int(img) in splits_counts['valid']:
+                new_file_path = f'{root}/valid/processed/{i}_{file_name}'
+
+            elif int(img) in splits_counts['test']:
+                new_file_path = f'{root}/test/processed/{i}_{file_name}'
+
+            else:
+                ValueError("The image is not in any set !")
+
+            copy_file(file_path, new_file_path)
+
+    if verbose:
+        directory = f'{root}/train/processed/'
+        train_count = count_folders(directory)
+        print(f"Number of files in train: {train_count}")
+
+        directory = f'{root}/valid/processed/'
+        valid_count = count_folders(directory)
+        print(f"Number of files in valid: {valid_count}")
+
+        directory = f'{root}/test/processed/'
+        test_count = count_folders(directory)
+        print(f"Number of files in test: {test_count}")
+
+        total_nb = train_count + valid_count + test_count
+
+        print(f"Total Number of Images: {total_nb}")
+        print(f"Proportions: train {train_count / total_nb:.2f} - valid {valid_count / total_nb:.2f} - test {test_count / total_nb:.2f}")
+
+
+def count_folders(directory: str) -> int:
+    return len([f for f in os.listdir(directory) if os.path.isdir(os.path.join(directory, f))])
+
 
 def get_file_path_list(root : str) -> List[str]:
     """Get the list of files in a directory.
@@ -118,6 +166,71 @@ def copy_file(file_path : str, new_file_path : str) -> None:
 
     shutil.copy(file_path + '/img.jpg', new_file_path + '/img.jpg')
     shutil.copy(file_path + '/mask.jpg', new_file_path + '/mask.jpg')
+
+
+# def split_dataset_into_folds(dataset_files : List[str], k : int = 5, seed : int = 42) -> List[List[str]]:
+#     img_per_slide_count = get_img_per_slide_count(dataset_files)
+#     distinct_img = list(img_per_slide_count.keys())
+
+#     random.seed(seed)
+#     shuffle(distinct_img)
+
+#     folds = [[] for _ in range(k)]
+#     fold_annotation_counts = [0] * k
+
+#     for img in distinct_img:
+#         min_fold = fold_annotation_counts.index(min(fold_annotation_counts))
+
+#         folds[min_fold].append(img)
+#         fold_annotation_counts[min_fold] += img_per_slide_count[img] # try to have fold with same number of annotations
+
+#     return folds
+
+
+# def get_files_for_fold(dataset_files : List[str], fold : List[str]) -> List[str]:
+#     files_for_fold = []
+
+#     for file_path in dataset_files:
+#         file_name = file_path.split('/')[-1]
+#         img, _ = file_name.split('_')
+
+#         if img in fold:
+#             files_for_fold.append(file_path)
+
+#     return files_for_fold
+
+
+# def cross_validate_datasets(root : str, datasets : List[str], k : int = 5, verbose : bool = True):
+#     dataset_splits = {name : split_dataset_into_folds(get_file_path_list(name), k) for name in datasets}
+    
+#     for i in range(k):
+#         if verbose:
+#             print(f"Processing fold {i + 1}/{k}")
+        
+#         train_files, valid_files, test_files = [], [], []
+
+#         for dataset_name, folds in dataset_splits.items():
+#             dataset_files = get_file_path_list(dataset_name)
+            
+#             test_files.extend(get_files_for_fold(dataset_files, folds[i]))
+#             valid_files.extend(get_files_for_fold(dataset_files, folds[(i + 1) % k]))
+            
+#             for j, fold in enumerate(folds):
+#                 if j != i and j != (i + 1) % k:
+#                     train_files.extend(get_files_for_fold(dataset_files, fold))
+
+#         save_fold_to_directory(root, i, train_files, "train")
+#         save_fold_to_directory(root, i, valid_files, "valid")
+#         save_fold_to_directory(root, i, test_files, "test")
+
+
+# def save_fold_to_directory(root : str, fold_index : int, files : List[str], split : str):
+#     for file_path in files:
+#         file_name = file_path.split('/')[-1]
+#         new_file_path = os.path.join(root, f"fold_{fold_index}/{split}/", file_name)
+
+#         os.makedirs(os.path.dirname(new_file_path), exist_ok = True)
+#         copy_file(file_path, new_file_path)
 
 
 if __name__ == '__main__':

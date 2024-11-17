@@ -1,10 +1,7 @@
-from argparse import ArgumentParser
+import torch
 from functools import partial
 from typing import Any, Dict, List
 
-import torch
-
-#from segment_anything.build_sam import build_sam_vit_b, build_sam_vit_h, build_sam_vit_l
 from segment_anything.modeling import (
     ImageEncoderViT,
     MaskDecoder,
@@ -12,8 +9,6 @@ from segment_anything.modeling import (
     Sam,
     TwoWayTransformer,
 )
-from torch import nn
-
 
 class TrainableSam(Sam):
     """A trainable version of the Sam that allows backpropagation on the model.
@@ -139,7 +134,7 @@ def load_model(model_path : str, model_type : str = 'vit_b', img_embeddings_as_i
     else:
         raise ValueError(f'Model {model_type} not supported')
 
-    model.requires_grad_(True) # to verify later, but is used to require gradients for all param, does not make sense if load model is used only to load the model for evaluation
+    model.requires_grad_(True)
     
     model.img_embeddings_as_input = img_embeddings_as_input
     model.return_iou = return_iou
@@ -238,9 +233,6 @@ def _build_sam(
     if checkpoint is not None:
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f)
-        '''for key in list(state_dict.keys()):
-            if key.startswith('module.'):
-                state_dict[key[7:]] = state_dict.pop(key)'''
         sam.load_state_dict(state_dict)
     return sam
 

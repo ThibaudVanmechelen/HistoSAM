@@ -4,7 +4,6 @@ Crops around annotations are resized into 1024x1024 images."""
 
 import logging
 import os
-import sys
 from argparse import ArgumentParser
 from math import floor
 from tomllib import load
@@ -42,7 +41,7 @@ def get_localisation_of_annotation(annotation : Annotation) -> tuple[int, int, i
     width = floor(geometry[2] - geometry[0])
     height = floor(geometry[3] - geometry[1])
 
-    return width, height, floor(geometry[0]), floor(geometry[3]) # bottom left referential here (opposition to chy anapth scraper top left referential !)
+    return width, height, floor(geometry[0]), floor(geometry[3]) # bottom left referential here (opposition to chu anapth scraper top left referential !)
 
 
 def get_annotation_size(img_width : int, img_height : int, width : int, height : int, zoom_out_factor : float = 1.0, minimum_size : int = -1) -> int:
