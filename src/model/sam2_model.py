@@ -1,5 +1,4 @@
-from functools import partial
-from typing import Any, Dict, List
+from typing import List
 
 import os
 import time
@@ -10,7 +9,7 @@ import numpy as np
 from tqdm import tqdm
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import AdamW
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 
@@ -18,6 +17,7 @@ from cv2 import INTER_NEAREST, resize
 from sklearn.metrics import f1_score, jaccard_score, precision_score, recall_score
 
 from dataset_processing.dataset import (
+    SAMDataset,
     AugmentedSamDataset,
     SamDatasetFromFiles,
     filter_dataset,
@@ -25,7 +25,6 @@ from dataset_processing.dataset import (
 from dataset_processing.preprocess import collate_fn
 
 from sam2.build_sam import build_sam2
-from sam2.modeling.sam2_base import SAM2Base
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 IMG_RESOLUTION = 1024
@@ -36,11 +35,14 @@ class TrainableSAM2(SAM2ImagePredictor):
     instructions which need to be removed, thus i did not include it in the following code since I don't want to train the image encoder and removing those statements would slow the whole
     training down by computing unnecessary gradients.
     """
-    def __init__(self, finetuned_model_name : str, model : SAM2Base, do_train_prompt_encoder : bool, do_train_mask_decoder : bool, img_embeddings_as_input : bool):
+    def __init__(self, finetuned_model_name : str, cfg : str, checkpoint : str, mode : str,
+                 do_train_prompt_encoder : bool, do_train_mask_decoder : bool, img_embeddings_as_input : bool, device : str):
+        model = build_sam2(config_file = cfg,  ckpt_path = checkpoint, device = device, mode = mode,  apply_postprocessing = True)
         super().__init__(model)
 
         self.finetuned_model_name = finetuned_model_name
         self.img_embeddings_as_input = img_embeddings_as_input
+        self.device = device
 
         if do_train_prompt_encoder:
             self.model.sam_prompt_encoder.train(do_train_prompt_encoder)
@@ -53,14 +55,43 @@ class TrainableSAM2(SAM2ImagePredictor):
         self.scheduler = StepLR(self.optimizer, step_size = step_size, gamma = gamma)
         self.scaler = GradScaler()
  
-    def save_embeddings(self):
-        return
+    def save_embeddings(self, config : dict): # TODO make the config
+        self.model.eval()
+
+        dataset = SAMDataset(root = config.save_embeddings.dataset_path,
+                             prompt_type = {'points' : False, 
+                                            'box' : False, 
+                                            'neg_points' : False, 
+                                            'mask' : False},
+                             n_points = 0,
+                             n_neg_points = 0,
+                             verbose = True,
+                             to_dict = True,
+                             neg_points_inside_box = False,
+                             points_near_center = -1,
+                             random_box_shift = 0,
+                             mask_prompt_type = 'scribble',
+                             box_around_mask = False)
+
+        output_dir = config.save_embeddings.output_path
+        os.makedirs(output_dir, exist_ok = True)
+
+        for i, (data, _) in tqdm(enumerate(dataset), total = len(dataset), desc = 'Saving img embeddings'):
+            with torch.no_grad():
+                sam2_image = self.convert_img_from_sam_to_sam2_format(data['image'])
+                self.set_image(sam2_image)
+
+                features = self._features # do not need to save orig_hw because standard 1024 x 1024 which is specified in to_dict from preprocess.py
+
+            file_name = dataset.images[i]
+            file_name = file_name.split('/')[-2]
+
+            save_path = os.path.join(output_dir, f"{file_name}.pt")
+            torch.save(features, save_path)
     
-    def load_embeddings(self):
-        return
-    
-    def load_weights(self): # probably will be a function not a method
-        return
+    def load_weights(self, weight_path : str) -> None:
+        self.model.load_state_dict(torch.load(weight_path))
+        self.model.eval()
 
     def move_to_gpu(self, data : list[dict], device : str = 'cuda') -> list[dict]:
         """Move data to a device."""
@@ -71,8 +102,31 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return data
     
+    def load_embedding_to_model(self, data : list[dict]): # to device ??????
+        self._orig_hw = []
+        image_embeds = []
+        high_res_feats = []
+
+        for idx in len(data):
+            self._orig_hw.append(data[idx]['original_size'])
+
+            temp_embed = data[idx]['image']['image_embed']
+            temp_res = data[idx]['image']['high_res_feats']
+
+            image_embeds.append(temp_embed)
+            high_res_feats.append(temp_res)
+
+        batched_image_embed = torch.stack(image_embeds, dim = 0).to(self.device)
+
+        batched_high_res_feats = []
+        for u in range(len(high_res_feats[0])):
+            batched_feature = torch.stack([feat[u] for feat in high_res_feats], dim = 0).to(self.device)
+            batched_high_res_feats.append(batched_feature)
+    
+        self._features = {"image_embed": batched_image_embed, "high_res_feats": batched_high_res_feats}
+    
     def convert_img_from_sam_to_sam2_format(self, sam_image : torch.Tensor) -> np.ndarray:
-        img_np = sam_image.numpy() # image is 3xHxW
+        img_np = sam_image.cpu().numpy() if sam_image.device.type == "cuda" else sam_image.numpy() # image is 3xHxW
         img_np = np.transpose(img_np, (1, 2, 0)) # image becomes HxWx3
         
         if img_np.max() <= 1.0:
@@ -82,11 +136,30 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return img_np
     
-    def convert_prompts_from_sam_to_sam2_format(self, record : dict) -> dict: # TODO
-        return
+    def convert_prompts_from_sam_to_sam2_format(self, record : dict) -> dict: # Note: kind of legacy code, changed it multiple times, now more than a place holder than anything
+        sam2_prompts = {'point_coords': None, 'point_labels': None, 'boxes': None, 'mask_inputs': None}
         
-    def convert_batch_prompts_from_sam_to_sam2_format(self, record : dict) -> dict: # TODO
-        return
+        sam2_prompts['point_coords'] = record.get('point_coords', None)
+        sam2_prompts['point_labels'] = record.get('point_labels', None)
+        sam2_prompts['boxes'] = record.get('boxes', None)
+        sam2_prompts['mask_inputs'] = record.get('mask_inputs', None)
+
+        return sam2_prompts
+        
+    def convert_batch_prompts_from_sam_to_sam2_format(self, data : list[dict]) -> dict:
+        sam2_prompts = {'point_coords': [], 'point_labels': [], 'boxes': [], 'mask_inputs': []}
+
+        for item in data:
+            sam2_prompts['point_coords'].append(item.get('point_coords', None))
+            sam2_prompts['point_labels'].append(item.get('point_labels', None))
+            sam2_prompts['boxes'].append(item.get('boxes', None))
+            sam2_prompts['mask_inputs'].append(item.get('mask_inputs', None))
+
+        for key in sam2_prompts:
+            if all(value is None for value in sam2_prompts[key]):
+                sam2_prompts[key] = None
+
+        return sam2_prompts
     
     def train_model(self, config : dict, use_dataset : List[bool]):
         train_dataset = SamDatasetFromFiles(root = config.cytomine.dataset_path,
@@ -125,7 +198,7 @@ class TrainableSAM2(SAM2ImagePredictor):
         if config.misc.wandb:
             wandb.init(project = config.wandb.name, config = config)
 
-        trainloader = DataLoader(train_dataset, batch_size = config.training.batch_size, shuffle = True, collate_fn = collate_fn)
+        trainloader = DataLoader(train_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
         validloader = DataLoader(valid_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
 
         if config.training.eval_every_epoch:
@@ -172,11 +245,11 @@ class TrainableSAM2(SAM2ImagePredictor):
                 with autocast(): # modifying floating point precision to speed up the training
                     if self.img_embeddings_as_input:
                         self.reset_predictor()
+                        
                         self._is_image_set = True
                         self._is_batch = True
 
-                        self._features = None # TODO see how i will handle embedding to do this
-                        self._orig_hw = None  # TODO
+                        self.load_embedding_to_model(data)
                             
                     else:
                         sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
@@ -282,8 +355,8 @@ class TrainableSAM2(SAM2ImagePredictor):
                 torch.save({'epoch': epoch, 'optimizer': self.optimizer.state_dict()}, name_checkpoint)
 
             if evalloader is not None:
-                scores = self.eval_loop(evalloader, device, input_mask_eval)
-                print(f'Evaluation - Total Loss: {scores["total_loss"]}, BCE Loss: {scores["BCE"]}, Score Loss: {scores["score_loss"]}, Dice: {scores["dice"]}, IoU: {scores["iou"]}, Precision: {scores["precision"]}, Recall: {scores["recall"]}, Time: {scores['prediction_time']}')
+                scores = self.eval_loop(evalloader, input_mask_eval, return_mean = True)
+                print(f'Evaluation - Total Loss: {scores["total_loss"]}, BCE Loss: {scores["BCE"]}, Score Loss: {scores["score_loss"]}, Dice: {scores["dice"]}, IoU: {scores["iou"]}, Precision: {scores["precision"]}, Recall: {scores["recall"]}, Time: {scores["prediction_time"]}')
 
                 if use_wandb:
                     wandb.log({
@@ -339,7 +412,7 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return scores
     
-    def eval_loop(self, dataloader : DataLoader, input_mask_eval : bool) -> dict:
+    def eval_loop(self, dataloader : DataLoader, input_mask_eval : bool, return_mean : bool) -> dict:
         scores = {
                 'Total Loss':[], 'BCE Loss':[], 'Score Loss':[],
                 'prediction_time':[],
@@ -357,11 +430,11 @@ class TrainableSAM2(SAM2ImagePredictor):
                 start_time = time.time()
                 if self.img_embeddings_as_input:
                     self.reset_predictor()
+                                            
                     self._is_image_set = True
                     self._is_batch = True
 
-                    self._features = None # TODO see how i will handle embedding to do this
-                    self._orig_hw = None  # TODO
+                    self.load_embedding_to_model(data)
                             
                 else:
                     self.set_image_batch(sam2_image_batch)
@@ -388,10 +461,10 @@ class TrainableSAM2(SAM2ImagePredictor):
                     selected_score = scores[i][most_probable_mask_idx]
                     selected_mask = pred_masks[i][most_probable_mask_idx]
 
-                    seg_loss = BCEWithLogitsLoss(selected_mask.float(), mask[i].float())
+                    truth_mask = mask[i].float()
+                    seg_loss = BCEWithLogitsLoss(selected_mask.float(), truth_mask)
                     batch_segmentation_loss.append(seg_loss)
 
-                    truth_mask = mask[i].float()
                     sig_mask = torch.sigmoid(selected_mask)
                     inter = (truth_mask * (sig_mask > 0.5)).sum(1).sum(1)
                     iou = inter / (truth_mask.sum(1).sum(1) + (sig_mask > 0.5).sum(1).sum(1) - inter)
@@ -400,10 +473,10 @@ class TrainableSAM2(SAM2ImagePredictor):
                     batch_score_loss.append(score_loss)
 
                     selected_mask = np.array(selected_mask, dtype = np.uint8)
-                    mask[i] = np.array(mask[i], dtype = np.uint8)
+                    mask_i = np.array(mask[i], dtype = np.uint8)
 
                     y_pred = selected_mask.flatten()
-                    y_true = mask[i].flatten()
+                    y_true = mask_i.flatten()
                     
                     scores['dice'].append(f1_score(y_true, y_pred))
                     scores['iou'].append(jaccard_score(y_true, y_pred))
@@ -428,11 +501,8 @@ class TrainableSAM2(SAM2ImagePredictor):
                 scores['Score Loss'].append(mean_score_loss.item())
                 scores['prediction_time'].append(end_time - start_time)
 
-        for key in scores.keys():
-            scores[key] = np.mean(scores[key])
+        if return_mean:
+            for key in scores.keys():
+                scores[key] = np.mean(scores[key])
 
         return scores
-
-
-def _build_sam2(checkpoint : str, cfg : str, device: str, mode : str, apply_post_processing : bool = True) -> SAM2Base:
-    return build_sam2(config_file = cfg,  ckpt_path = checkpoint, device = device, mode = mode,  apply_postprocessing = apply_post_processing)

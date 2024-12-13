@@ -37,17 +37,17 @@ def save_img_embeddings(config : dict):
         torch.save(img_embedding, f'{config.cytomine.dataset_path}img_embeddings/{file_name}.pt')
 
 def save_prompts(config : dict):
-    dataset = SAMDataset(root=config.cytomine.dataset_path,
-                            prompt_type={'points':True, 'box':True, 'neg_points':True, 'mask':True},
-                            n_points=config.dataset.n_points,
-                            n_neg_points=config.dataset.n_neg_points,
-                            verbose=True,
-                            to_dict=True,
-                            neg_points_inside_box=config.dataset.negative_points_inside_box,
-                            points_near_center=config.dataset.points_near_center,
-                            random_box_shift=config.dataset.random_box_shift,
-                            mask_prompt_type=config.dataset.mask_prompt_type,
-                            box_around_mask=config.dataset.box_around_prompt_mask)
+    dataset = SAMDataset(root = config.cytomine.dataset_path,
+                            prompt_type = {'points':True, 'box':True, 'neg_points':True, 'mask':True},
+                            n_points = config.dataset.n_points,
+                            n_neg_points = config.dataset.n_neg_points,
+                            verbose = True,
+                            to_dict = True,
+                            neg_points_inside_box = config.dataset.negative_points_inside_box,
+                            points_near_center = config.dataset.points_near_center,
+                            random_box_shift = config.dataset.random_box_shift,
+                            mask_prompt_type = config.dataset.mask_prompt_type,
+                            box_around_mask = config.dataset.box_around_prompt_mask)
 
     prompts = dataset.prompts
     torch.save(prompts, f'{config.cytomine.dataset_path}prompts.pt')

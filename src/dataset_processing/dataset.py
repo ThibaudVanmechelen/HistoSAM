@@ -17,7 +17,8 @@ from cv2 import (
     RETR_EXTERNAL, 
     CHAIN_APPROX_SIMPLE,
     drawContours,
-    FILLED
+    FILLED,
+    convexHull
 )
 from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
@@ -206,17 +207,17 @@ class AbstractSAMDataset(Dataset, ABC):
         # Draw horizontal lines between the left and right points
         scribble_mask = np.zeros_like(mask)
         for i in range(1, n-1):
-            line(scribble_mask, (left_points_x[i], left_points_y[i]), (right_points_x[i], right_points_y[i]), 1, 1
-                 )
+            line(scribble_mask, (left_points_x[i], left_points_y[i]), (right_points_x[i], right_points_y[i]), 1, 1)
+            
         kernel = getStructuringElement(MORPH_ELLIPSE, (20, 20))
 
         return dilate(scribble_mask, kernel=kernel)
     
-    def _get_mask_loose_dilation(self, mask : np.ndarray, looseness : int = 10, noise_level : int = 5, iterations : int = 1) -> np.ndarray:
-        mask = (mask > 0).astype(np.uint8) # converting mask to binary (0 and 1)
-        new_mask = np.zeros_like(mask)
+    def _get_mask_loose_dilation(self, mask : np.ndarray, looseness : int = 20, noise_level : int = 20, iterations : int = 1) -> np.ndarray:
+        mask_ = np.where(mask > 0, 1, 0).astype(np.uint8)  # converting mask to binary (0 and 1)
+        new_mask = np.zeros_like(mask_, dtype = np.uint8)
         
-        contours, _ = findContours(mask, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE)
+        contours, _ = findContours(mask_, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE)
         for contour in contours:
             noisy_contour = []
             
@@ -228,6 +229,7 @@ class AbstractSAMDataset(Dataset, ABC):
                 noisy_contour.append([[noisy_x, noisy_y]])
             
             noisy_contour = np.array(noisy_contour, dtype = np.int32)
+            noisy_contour = convexHull(noisy_contour)
             drawContours(new_mask, [noisy_contour], -1, 1, thickness = FILLED)
         
         kernel = np.ones((looseness, looseness), np.uint8)
@@ -253,7 +255,7 @@ class SAMDataset(AbstractSAMDataset):
     def __init__(self, root : str, transform = None, use_img_embeddings : bool = False,
                  prompt_type : dict = {'points':False, 'box': False, 'neg_points':False, 'mask':False}, 
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
-                 random_state : int = None, to_dict : bool = True, neg_points_inside_box : bool = False, 
+                 random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, neg_points_inside_box : bool = False, 
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
                  box_around_mask : bool = False):
         '''Initialize SAMDataset class.
@@ -286,10 +288,11 @@ class SAMDataset(AbstractSAMDataset):
         self.near_center = points_near_center
         self.inside_box = neg_points_inside_box
         self.to_dict = to_dict
+        self.is_sam2_prompt = is_sam2_prompt
         self.zoom_out = zoom_out
 
         if random_state is not None:
-            torch.manual_seed(random_state)
+            torch.manual_seed(random_state) # wrong because set seed in torch and use numpy for random ...
 
         if self.verbose:
             print('Loading images and masks paths...')
@@ -325,13 +328,13 @@ class SAMDataset(AbstractSAMDataset):
         prompt = {'points':self.prompts['points'][idx], 'box':self.prompts['box'][idx], 'neg_points':self.prompts['neg_points'][idx], 'mask':self.prompts['mask'][idx]}
     
         if self.use_img_embeddings:
-            return to_dict(self.img_embeddings[idx], prompt, self.use_img_embeddings), np.where(mask > 0, 1, 0)
+            return to_dict(self.img_embeddings[idx], prompt, use_img_embeddings = self.use_img_embeddings, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
     
         if self.transform:
             img, mask = self.transform(img, mask)
 
         if self.to_dict:
-            return to_dict(img, prompt), np.where(mask > 0, 1, 0)
+            return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
 
         return img, np.where(mask > 0, 1, 0), prompt
     
@@ -343,7 +346,7 @@ class AugmentedSamDataset(SAMDataset):
 
     def __init__(self, root : str, use_img_embeddings : bool = True,
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
-                 random_state : int = None, to_dict : bool = True, random_box_shift : int = 20, mask_prompt_type : str = 'truth',
+                 random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, random_box_shift : int = 20, mask_prompt_type : str = 'truth',
                  load_on_cpu : bool = False, filter_files : callable = None):
         '''Initialize SAMDataset class.
         root: str, path to the dataset directory
@@ -369,7 +372,8 @@ class AugmentedSamDataset(SAMDataset):
                          prompt_type=prompt_type, n_points=n_points, 
                          n_neg_points=n_neg_points, zoom_out=zoom_out, 
                          verbose=verbose, random_state=random_state, 
-                         to_dict=to_dict, neg_points_inside_box=neg_points_inside_box, 
+                         to_dict=to_dict, is_sam2_prompt = is_sam2_prompt, 
+                         neg_points_inside_box=neg_points_inside_box, 
                          points_near_center=points_near_center, 
                          random_box_shift=random_box_shift, 
                          mask_prompt_type=mask_prompt_type, 
@@ -404,13 +408,13 @@ class AugmentedSamDataset(SAMDataset):
             prompt[key] = self.prompts[key][img_idx]
 
         if self.use_img_embeddings:
-            return to_dict(self.img_embeddings[img_idx], prompt, self.use_img_embeddings), np.where(mask > 0, 1, 0)
+            return to_dict(self.img_embeddings[img_idx], prompt, use_img_embeddings = self.use_img_embeddings, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
         
         if self.transform:
             img, mask = self.transform(img, mask)
 
         if self.to_dict:
-            return to_dict(img, prompt), np.where(mask > 0, 1, 0)
+            return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
         
         return img, np.where(mask > 0, 1, 0), prompt
     
@@ -449,7 +453,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
     def __init__(self, root : str, transform = None, use_img_embeddings : bool = False,
                  prompt_type : dict = {'points':False, 'box': False, 'neg_points':False, 'mask':False}, 
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
-                 random_state : int = None, to_dict : bool = True, neg_points_inside_box : bool = False, 
+                 random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, neg_points_inside_box : bool = False, 
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
                  box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False):
         """Initialize SAMDataset class.
@@ -473,6 +477,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         self.inside_box = neg_points_inside_box
 
         self.to_dict = to_dict
+        self.is_sam2_prompt = is_sam2_prompt
         self.zoom_out = zoom_out
 
         self.prompts = torch.load(self.root + 'prompts.pt')
@@ -550,13 +555,13 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             prompt[key] = self.prompts[key][img_idx]
 
         if self.use_img_embeddings:
-            return to_dict(self.img_embeddings[img_idx], prompt, self.use_img_embeddings), np.where(mask > 0, 1, 0)
+            return to_dict(self.img_embeddings[img_idx], prompt, use_img_embeddings = self.use_img_embeddings, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
         
         if self.transform:
             img, mask = self.transform(img, mask)
 
         if self.to_dict:
-            return to_dict(img, prompt), np.where(mask > 0, 1, 0)
+            return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
         
         return img, np.where(mask > 0, 1, 0), prompt
     

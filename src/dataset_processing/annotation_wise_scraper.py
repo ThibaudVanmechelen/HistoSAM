@@ -83,7 +83,7 @@ def get_roi_around_annotation(img : ImageInstance, annotation : Annotation, conf
     random_state: int, random state for reproducibility of random shift.
     Returns: x, y, width, height of the ROI"""
     random_shift = config['cytomine']['random_shift']
-    random_state = config['cytomine']['random_state']
+    random_state = config['cytomine']['random_state'] # here random shift is set to 0, thus no problem, but should use different random state (because will always create same shift)
 
     zoom_out_factor = config['cytomine']['zoom_out_factor']
 
@@ -140,20 +140,20 @@ def delete_sample(dataset_path : str, i : int, a : int):
     os.rmdir(dataset_path + f'{i}_{a}')
 
 
-def download_images(config : dict):
+def download_images(config : dict, root : str):
     """Downloads all images from a Cytomine projects around annotations.
     Requires a config dictionary (see config.toml and load_config function).
     Must be executed unside a with Cytomine() statement."""
     img_collections = ImageInstanceCollection().fetch_with_filter("project", config['cytomine']['project_id'])
 
-    dataset_path = '../' + config.cytomine.dataset_path + 'processed/'
+    dataset_path = os.path.join(root, config.cytomine.dataset_path)
     input_size = config.sam.input_size
 
     nb_img = len(img_collections)
     print("Cropping and downloading images")
     print(f"Number of Images: {nb_img}")
 
-    for i, img in tqdm(enumerate(img_collections), total=len(img_collections)):
+    for i, img in tqdm(enumerate(img_collections), total = len(img_collections)):
         annotations = AnnotationCollection()
 
         annotations.project = config.cytomine.project_id
@@ -206,12 +206,16 @@ def download_images(config : dict):
 
 if __name__ == '__main__':
     parser = ArgumentParser(description = 'Download cropped images around annotations from a Cytomine project.')
-    parser.add_argument('--config', required = False, type = str, help = 'Path to the configuration file. Default: ../config.toml', default = '../config.toml')
+    parser.add_argument('--config', required = True, type = str, help = 'Path to the configuration file. Default: ../config.toml', default = '../config.toml')
+    parser.add_argument('--keys', required = True, type = str, help = 'Path to the keys.toml file. Default: ../keys.toml', default = '../keys.toml')
+    parser.add_argument('--root', required = True, type = str, help = 'Root directory for the dataset. Default: current working directory.', default = os.getcwd())
 
     args = parser.parse_args()
 
-    keys = load_config('../keys.toml')
+    keys = load_config(args.keys)
     config = load_config(args.config)
 
+    root = args.root
+
     with Cytomine(keys['host'], keys['public_key'], keys['private_key'], verbose = logging.ERROR) as cytomine:
-        download_images(config)
+        download_images(config, root)

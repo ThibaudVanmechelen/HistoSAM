@@ -1,12 +1,10 @@
 import os
 import shutil
 
-import random
-from random import choice, shuffle
+from random import choice
 from typing import List
 
 from tqdm import tqdm
-
 
 def get_img_per_slide_count(dataset_files : List[str]) -> int:
     """Return the number of img per slide in a dataset.
@@ -86,17 +84,24 @@ def merge_datasets_with_different_splits(root : str, datasets : List[str],
             copy_file(file_path, new_file_path)
 
     if verbose:
+        train_count = 0
+        valid_count = 0
+        test_count = 0
+
         directory = f'{root}/train/processed/'
-        train_count = count_folders(directory)
-        print(f"Number of files in train: {train_count}")
+        if os.path.exists(directory):
+            train_count = count_folders(directory)
+            print(f"Number of files in train: {train_count}")
 
         directory = f'{root}/valid/processed/'
-        valid_count = count_folders(directory)
-        print(f"Number of files in valid: {valid_count}")
+        if os.path.exists(directory):
+            valid_count = count_folders(directory)
+            print(f"Number of files in valid: {valid_count}")
 
         directory = f'{root}/test/processed/'
-        test_count = count_folders(directory)
-        print(f"Number of files in test: {test_count}")
+        if os.path.exists(directory):
+            test_count = count_folders(directory)
+            print(f"Number of files in test: {test_count}")
 
         total_nb = train_count + valid_count + test_count
 
@@ -104,10 +109,10 @@ def merge_datasets_with_different_splits(root : str, datasets : List[str],
         print(f"Proportions: train {train_count / total_nb:.2f} - valid {valid_count / total_nb:.2f} - test {test_count / total_nb:.2f}")
 
 
-def merge_datasets_with_same_split(root : str, datasets : List[str], verbose : bool = True, splits = [0.6, 0.2, 0.2]) -> None: # for complete training
+def merge_datasets_with_same_split(root : str, datasets : List[str], verbose : bool = True, splits_ : List[float] = [0.6, 0.2, 0.2]) -> None: # for complete training
     for i, dataset_path in tqdm(enumerate(datasets), total = len(datasets), desc = 'Merging datasets', disable = not verbose):
         dataset_files = get_file_path_list(dataset_path)
-        splits_counts = get_img_per_splits(dataset_files, splits = splits)
+        splits_counts = get_img_per_splits(dataset_files, splits = splits_)
 
         for file_path in tqdm(dataset_files):
             file_name = file_path.split('/')[-1]
@@ -128,17 +133,24 @@ def merge_datasets_with_same_split(root : str, datasets : List[str], verbose : b
             copy_file(file_path, new_file_path)
 
     if verbose:
+        train_count = 0
+        valid_count = 0
+        test_count = 0
+
         directory = f'{root}/train/processed/'
-        train_count = count_folders(directory)
-        print(f"Number of files in train: {train_count}")
+        if os.path.exists(directory):
+            train_count = count_folders(directory)
+            print(f"Number of files in train: {train_count}")
 
         directory = f'{root}/valid/processed/'
-        valid_count = count_folders(directory)
-        print(f"Number of files in valid: {valid_count}")
+        if os.path.exists(directory):
+            valid_count = count_folders(directory)
+            print(f"Number of files in valid: {valid_count}")
 
         directory = f'{root}/test/processed/'
-        test_count = count_folders(directory)
-        print(f"Number of files in test: {test_count}")
+        if os.path.exists(directory):
+            test_count = count_folders(directory)
+            print(f"Number of files in test: {test_count}")
 
         total_nb = train_count + valid_count + test_count
 

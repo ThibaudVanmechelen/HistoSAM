@@ -1,0 +1,13 @@
+title = "Scraper for LBTD-AGDC10"
+
+# LBTD-AGDC10
+[cytomine]
+dataset_path = "datasets/LBTD-AGDC10/"
+project_id = '54149054'
+annotation_users_id = ['23245043', '35984253']
+random_shift = 0
+random_state = 42
+zoom_out_factor = 2.0
+
+[sam]
+input_size = 1024

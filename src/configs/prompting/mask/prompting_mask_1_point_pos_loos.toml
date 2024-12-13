@@ -1,0 +1,24 @@
+title = "Evaluation for mask with 1 positive point prompting"
+
+[prompting_evaluation]
+points = true
+negative_points = false
+box = false
+mask_prompt = true
+n_points = 1
+n_neg_points = 0
+use_img_embeddings = false
+negative_points_inside_box = false
+points_near_center = 4 # The higher the value, the closer to the center of mask the points have a chance to be. -1 means no restriction
+random_box_shift = 20 # Random shift in the box position in pixels (simulates the annotation error of an expert)
+mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
+box_around_prompt_mask = false
+batch_size = 4
+input_mask_eval = true
+
+[sam]
+model_type = 'vit_b'    # 'vit_b', 'vit_l', 'vit_h'
+input_size = 1024
+
+[misc]
+device = 'cuda' # 'cuda' or 'cpu'

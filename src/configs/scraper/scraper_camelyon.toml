@@ -1,0 +1,13 @@
+title = "Scraper for Camelyon16"
+
+# CAMELYON16-Train
+[cytomine]
+dataset_path = "datasets/CAMELYON16/"
+project_id = '10688948'
+annotation_users_id = ['10695763']
+random_shift = 0
+random_state = 42
+zoom_out_factor = 2.0
+
+[sam]
+input_size = 1024
