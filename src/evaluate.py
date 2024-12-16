@@ -74,7 +74,7 @@ def evaluate(dataset_path : str, model_path : str, model_type = 'vit_b', n_point
 
 #     return scores
 
-def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpoint_path : str, is_sam2 : bool): #config format should be based on prompting evaluation format
+def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpoint_path : str, is_sam2 : bool): # config format should be based on prompting evaluation format
     prompt_type = {
                    'points' : config.prompting_evaluation.points, 
                    'box' : config.prompting_evaluation.box, 
@@ -95,6 +95,7 @@ def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpo
                         random_box_shift = config.prompting_evaluation.random_box_shift,
                         mask_prompt_type = config.prompting_evaluation.mask_prompt_type,
                         box_around_mask = config.prompting_evaluation.box_around_prompt_mask,
+                        is_sam2_prompt = is_sam2
                     )
     
     dataloader = DataLoader(dataset, batch_size = config.prompting_evaluation.batch_size, shuffle = False, collate_fn = collate_fn)
@@ -106,8 +107,7 @@ def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpo
         model = TrainableSAM2(finetuned_model_name = "prompting_model", cfg = config.sam2.model_type, checkpoint = checkpoint_path, mode = "eval",
                               do_train_prompt_encoder = False, do_train_mask_decoder = False, img_embeddings_as_input = False, device = config.misc.device)
             
-        scores = model.eval_loop(dataloader, config.prompting_evaluation.input_mask_eval, return_mean = False)
-
+        scores = model.test_loop(dataloader, config.prompting_evaluation.input_mask_eval)
 
     del dataset
     del dataloader
@@ -139,6 +139,7 @@ def evaluate_without_prompts(dataset_path : str, checkpoint_path : str, is_sam2 
                         random_box_shift = 0,
                         mask_prompt_type = 'scribble',
                         box_around_mask = False,
+                        is_sam2_prompt = is_sam2
                     )
     
     dataloader = DataLoader(dataset, batch_size = 4, shuffle = False, collate_fn = collate_fn)
@@ -243,7 +244,7 @@ def evaluate_with_config(config : dict, use_dataset : List[bool] = [True, True, 
 
 #     return scores
 
-def eval_loop(model : nn.Module, dataloader : DataLoader, device : str='cuda', input_mask_eval : bool=False, return_mean : bool=True) -> dict:
+def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, return_mean : bool = True) -> dict:
     """Function to evaluate a model on a dataloader.
     model: nn.Module, model to evaluate
     dataloader: DataLoader, dataloader to use for the evaluation
@@ -263,41 +264,70 @@ def eval_loop(model : nn.Module, dataloader : DataLoader, device : str='cuda', i
 
     with torch.no_grad():
         for data, mask in tqdm(dataloader):
+            mask = torch.tensor(mask, dtype = torch.float32, device = device)
+
             start_time = time.time()
-            pred = model(data, multimask_output = True, binary_mask_output = False)
+            best_pred = model(data, multimask_output = True, binary_mask_output = False)
             end_time = time.time()
 
-            loss = nn.BCEWithLogitsLoss()(pred.float(), mask.to(device).float())
+            loss = nn.BCEWithLogitsLoss()(best_pred.float(), mask)
 
             scores['BCE'].append(loss.item())
             scores['prediction_time'].append(end_time - start_time)
 
-            best_pred = pred.cpu().numpy()
-            best_pred = np.array(best_pred, dtype = np.uint8)
+            best_pred = torch.where(best_pred > model.mask_threshold, 1, 0).float() # to obtain binary mask for the metrics
 
-            mask = np.array(mask, dtype = np.uint8)
-            for i in range(len(data)): # going through each item in the batch
-                y_pred = best_pred[i].flatten()
-                y_true = mask[i].flatten()
+            y_true_flat = mask.view(mask.size(0), -1)
+            y_pred_flat = best_pred.view(best_pred.size(0), -1)
+
+            y_true_sum = y_true_flat.sum(dim = 1)
+            y_pred_sum = y_pred_flat.sum(dim = 1)
+
+            intersection = (y_true_flat * y_pred_flat).sum(dim = 1)
+            union = y_true_sum + y_pred_sum - intersection
+
+            dice_score = (2 * intersection) / (y_true_sum + y_pred_sum)
+            iou_score = intersection / union
+            precision = intersection / y_pred_sum
+            recall = intersection / y_true_sum
+
+            dice_score = torch.nan_to_num(dice_score, nan = 0.0)
+            iou_score = torch.nan_to_num(iou_score, nan = 0.0)
+            precision = torch.nan_to_num(precision, nan = 0.0)
+            recall = torch.nan_to_num(recall, nan = 0.0)
+
+            scores['dice'].extend(dice_score.cpu().numpy())
+            scores['iou'].extend(iou_score.cpu().numpy())
+            scores['precision'].extend(precision.cpu().numpy())
+            scores['recall'].extend(recall.cpu().numpy())
+
+            if input_mask_eval:
+                input_masks = torch.stack([d['mask_inputs'].to(device).squeeze() for d in data])  # Shape: (N, H, W)
+                input_masks = input_masks.unsqueeze(1)  # Shape: (N, 1, H, W)
+
+                resized_masks = F.interpolate(input_masks, size = (IMG_RESOLUTION, IMG_RESOLUTION), mode = 'nearest-exact')
+                resized_masks_flat = resized_masks.view(resized_masks.size(0), -1)
+
+                y_input_sum = resized_masks_flat.sum(dim = 1)
+
+                intersection_input = (y_true_flat * resized_masks_flat).sum(dim = 1)
+                union_input = y_true_sum + y_input_sum - intersection_input
+
+                dice_input = (2 * intersection_input) / (y_true_sum + y_input_sum)
+                iou_input = intersection_input / union_input
+                precision_input = intersection_input / y_input_sum
+                recall_input = intersection_input / y_true_sum
+
+                dice_input = torch.nan_to_num(dice_input, nan = 0.0)
+                iou_input = torch.nan_to_num(iou_input, nan = 0.0)
+                precision_input = torch.nan_to_num(precision_input, nan = 0.0)
+                recall_input = torch.nan_to_num(recall_input, nan = 0.0)
+
+                scores['dice_input'].extend(dice_input.cpu().numpy())
+                scores['iou_input'].extend(iou_input.cpu().numpy())
+                scores['precision_input'].extend(precision_input.cpu().numpy())
+                scores['recall_input'].extend(recall_input.cpu().numpy())
                 
-                scores['dice'].append(f1_score(y_true, y_pred))
-                scores['iou'].append(jaccard_score(y_true, y_pred))
-                scores['precision'].append(precision_score(y_true, y_pred, zero_division = 1))
-                scores['recall'].append(recall_score(y_true, y_pred, zero_division = 1))
-
-                if input_mask_eval:
-                    input_mask = resize(data[i]['mask_inputs'].cpu().numpy()[0][0], (IMG_RESOLUTION, IMG_RESOLUTION), interpolation = INTER_NEAREST)
-                    y_input = input_mask.flatten()
-
-                    scores['dice_input'].append(f1_score(y_true, y_input)) 
-                    scores['iou_input'].append(jaccard_score(y_true, y_input))
-                    scores['precision_input'].append(precision_score(y_true, y_input, zero_division = 1))
-                    scores['recall_input'].append(recall_score(y_true, y_input, zero_division = 1))
-
-    if return_mean:
-        for key in scores.keys():
-            scores[key] = np.mean(scores[key])
-
     model.return_iou = True
 
     return scores
@@ -387,7 +417,7 @@ def test_loop(model: torch.nn.Module, dataloader: DataLoader, device: str = 'cud
         if not is_sam2:
             predictor = SamAutomaticMaskGenerator(model, points_per_side = 16)
         else:
-            predictor = SAM2AutomaticMaskGenerator(model)
+            predictor = SAM2AutomaticMaskGenerator(model, points_per_side = 16)
     else:
         model.to(device)
         model.eval()
@@ -451,7 +481,7 @@ def test_loop(model: torch.nn.Module, dataloader: DataLoader, device: str = 'cud
                     input_masks = input_masks.unsqueeze(1)  # Shape: (N, 1, H, W)
 
                 else:
-                    input_masks = torch.stack([torch.from_numpy(d['mask_inputs']).to(device).squeeze(0)for d in data])  # Shape: (N, H, W)
+                    input_masks = torch.stack([torch.from_numpy(d['mask_inputs']).to(device).squeeze(0) for d in data])  # Shape: (N, H, W)
                     input_masks = input_masks.unsqueeze(1)  # Shape: (N, 1, H, W)
 
                 resized_masks = F.interpolate(input_masks, size = (IMG_RESOLUTION, IMG_RESOLUTION), mode = 'nearest-exact')

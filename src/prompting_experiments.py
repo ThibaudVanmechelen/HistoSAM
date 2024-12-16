@@ -170,7 +170,8 @@ def run_experiment_datasets(config_path : str, dataset_paths : list[str], checkp
     config = load_config(config_path)
 
     for dataset in dataset_paths:
-        dataset_name = os.path.basename(os.path.normpath(dataset))
+        path_parts = os.path.normpath(dataset).split(os.sep)
+        dataset_name = path_parts[-2]
         print(f"Starting prompting for dataset: {dataset_name}")
 
         scores = evaluate_standard_SAM_with_config(config, dataset, checkpoint_path, is_sam2)

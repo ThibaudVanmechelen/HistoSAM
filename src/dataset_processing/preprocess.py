@@ -45,6 +45,9 @@ def to_dict(img : Union[np.ndarray, dict], prompts : dict[str, np.ndarray], use_
             point_labels = np.ones(len(prompts['points']), dtype = np.float32)
             neg_point_labels = np.zeros(len(prompts['neg_points']), dtype = np.float32)
 
+            point_coords = prompts['points']
+            neg_point_coords = prompts['neg_points']
+
             output['point_coords'] = np.concatenate([point_coords, neg_point_coords], axis = 0) # TODO check this part
             output['point_labels'] = np.concatenate([point_labels, neg_point_labels], axis = 0)
 

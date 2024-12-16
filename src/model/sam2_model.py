@@ -12,6 +12,7 @@ from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
 from cv2 import INTER_NEAREST, resize
 from sklearn.metrics import f1_score, jaccard_score, precision_score, recall_score
@@ -412,7 +413,7 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return scores
     
-    def eval_loop(self, dataloader : DataLoader, input_mask_eval : bool, return_mean : bool) -> dict:
+    def eval_loop(self, dataloader : DataLoader, input_mask_eval : bool) -> dict:
         scores = {
                 'Total Loss':[], 'BCE Loss':[], 'Score Loss':[],
                 'prediction_time':[],
@@ -424,6 +425,118 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         with torch.no_grad():
             for data, mask in tqdm(dataloader):
+                mask = mask.to(device = self.device, dtype = torch.float32)
+    
+                prompts_record = self.convert_batch_prompts_from_sam_to_sam2_format(data)
+                sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
+
+                start_time = time.time()
+                if self.img_embeddings_as_input:
+                    self.reset_predictor()
+                                            
+                    self._is_image_set = True
+                    self._is_batch = True
+
+                    self.load_embedding_to_model(data)
+                            
+                else:
+                    self.set_image_batch(sam2_image_batch)
+
+                pred_masks, scores, _ = self.predict_batch(
+                    point_coords_batch = prompts_record.get("point_coords", None),
+                    point_labels_batch = prompts_record.get("point_labels", None),
+                    box_batch =  prompts_record.get("boxes", None),
+                    mask_input_batch = prompts_record.get("mask_inputs", None),
+                    multimask_output = True,
+                    return_logits = True,
+                    normalize_coords = True
+                ) # pred_masks are logit masks
+                end_time = time.time()
+
+                assert len(pred_masks) == len(data), "There should be a prediction for each element in the batch."
+
+                pred_masks = torch.stack([torch.tensor(pred, device = self.device) for pred in pred_masks])  # Shape: (N, C, H, W)
+                scores = torch.stack([torch.tensor(score, device = self.device) for score in scores])  # Shape: (N, C)
+                
+                most_probable_mask_idx = scores.argmax(dim = 1)  # Shape: (N)
+                selected_scores = scores.gather(1, most_probable_mask_idx.unsqueeze(1)).squeeze(1)  # Shape: (N), unsqueeze is to add a dim because it is needed by gather, gather 1 is to select accros dim 1, and squeeze is to remove the , 1 at the end
+                selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx]  # Shape: (N, H, W), extracting the masks
+
+                seg_loss = BCEWithLogitsLoss(selected_masks, mask.float())
+
+                sig_masks = torch.sigmoid(selected_masks)
+                binary_masks = (sig_masks > 0.5).float() # TODO check if value is indeed 0.5, github says 0.0
+
+                intersection = (mask * binary_masks).sum(dim = (1, 2))  # Shape: (N,)
+                union = mask.sum(dim = (1, 2)) + binary_masks.sum(dim = (1, 2)) - intersection  # Shape: (N,)
+                iou = intersection / (union + 1e-6)  # Avoid division by zero
+
+                # Compute score loss
+                score_loss = torch.abs(selected_scores - iou).mean()
+
+
+        #         for i in range(len(pred_masks)): # taking most probable mask and iou
+        #             most_probable_mask_idx = scores[i].argmax()
+
+        #             selected_score = scores[i][most_probable_mask_idx]
+        #             selected_mask = pred_masks[i][most_probable_mask_idx]
+
+        #             truth_mask = mask[i].float()
+        #             seg_loss = BCEWithLogitsLoss(selected_mask.float(), truth_mask)
+        #             batch_segmentation_loss.append(seg_loss)
+
+        #             sig_mask = torch.sigmoid(selected_mask)
+        #             inter = (truth_mask * (sig_mask > 0.5)).sum(1).sum(1)
+        #             iou = inter / (truth_mask.sum(1).sum(1) + (sig_mask > 0.5).sum(1).sum(1) - inter)
+        #             score_loss = torch.abs(selected_score - iou).mean()
+
+        #             batch_score_loss.append(score_loss)
+
+        #             selected_mask = np.array(selected_mask, dtype = np.uint8)
+        #             mask_i = np.array(mask[i], dtype = np.uint8)
+
+        #             y_pred = selected_mask.flatten()
+        #             y_true = mask_i.flatten()
+                    
+        #             scores['dice'].append(f1_score(y_true, y_pred))
+        #             scores['iou'].append(jaccard_score(y_true, y_pred))
+        #             scores['precision'].append(precision_score(y_true, y_pred, zero_division = 1))
+        #             scores['recall'].append(recall_score(y_true, y_pred, zero_division = 1))
+
+        #             if input_mask_eval:
+        #                 input_mask = resize(data[i]['mask_inputs'].cpu().numpy()[0][0], (IMG_RESOLUTION, IMG_RESOLUTION), interpolation = INTER_NEAREST)
+        #                 y_input = input_mask.flatten()
+
+        #                 scores['dice_input'].append(f1_score(y_true, y_input)) 
+        #                 scores['iou_input'].append(jaccard_score(y_true, y_input))
+        #                 scores['precision_input'].append(precision_score(y_true, y_input, zero_division = 1))
+        #                 scores['recall_input'].append(recall_score(y_true, y_input, zero_division = 1))
+
+        #         mean_segmentation_loss = torch.mean(torch.stack(batch_segmentation_loss))
+        #         mean_score_loss = torch.mean(torch.stack(batch_score_loss))
+        #         total_loss = mean_segmentation_loss + 0.05 * mean_score_loss
+
+        #         scores['Total Loss'].append(total_loss.item())
+        #         scores['BCE Loss'].append(mean_segmentation_loss.item())
+        #         scores['Score Loss'].append(mean_score_loss.item())
+        #         scores['prediction_time'].append(end_time - start_time)
+
+        # return scores
+
+    def test_loop(self, dataloader : DataLoader, input_mask_eval : bool) -> dict:
+        print("### Starting testing with SAM2 ! ###")
+        scores = {
+                'prediction_time':[],
+                'dice':[], 'iou':[], 'precision':[], 'recall':[], 
+                'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[]
+                }
+
+        self.model.eval()
+
+        with torch.no_grad():
+            for data, mask in tqdm(dataloader):
+                mask = mask.to(device = self.device, dtype = torch.float32)
+    
                 prompts_record = self.convert_batch_prompts_from_sam_to_sam2_format(data)
                 sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
 
@@ -447,62 +560,66 @@ class TrainableSAM2(SAM2ImagePredictor):
                     multimask_output = True,
                     return_logits = False,
                     normalize_coords = True
-                )
+                ) # pred_masks are binary masks
                 end_time = time.time()
-
-                batch_segmentation_loss = []
-                batch_score_loss = []
 
                 assert len(pred_masks) == len(data), "There should be a prediction for each element in the batch."
 
-                for i in range(len(pred_masks)): # taking most probable mask and iou
-                    most_probable_mask_idx = scores[i].argmax()
+                pred_masks = torch.stack([torch.tensor(pred, device = self.running_device) for pred in pred_masks])  # Shape: (N, C, H, W)
+                pred_scores = torch.stack([torch.tensor(score, device = self.running_device) for score in pred_scores])  # Shape: (N, C)
+                
+                most_probable_mask_idx = pred_scores.argmax(dim = 1)  # Shape: (N)
+                selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx, :, :]  # Shape: (N, H, W), extracting the masks
 
-                    selected_score = scores[i][most_probable_mask_idx]
-                    selected_mask = pred_masks[i][most_probable_mask_idx]
-
-                    truth_mask = mask[i].float()
-                    seg_loss = BCEWithLogitsLoss(selected_mask.float(), truth_mask)
-                    batch_segmentation_loss.append(seg_loss)
-
-                    sig_mask = torch.sigmoid(selected_mask)
-                    inter = (truth_mask * (sig_mask > 0.5)).sum(1).sum(1)
-                    iou = inter / (truth_mask.sum(1).sum(1) + (sig_mask > 0.5).sum(1).sum(1) - inter)
-                    score_loss = torch.abs(selected_score - iou).mean()
-
-                    batch_score_loss.append(score_loss)
-
-                    selected_mask = np.array(selected_mask, dtype = np.uint8)
-                    mask_i = np.array(mask[i], dtype = np.uint8)
-
-                    y_pred = selected_mask.flatten()
-                    y_true = mask_i.flatten()
-                    
-                    scores['dice'].append(f1_score(y_true, y_pred))
-                    scores['iou'].append(jaccard_score(y_true, y_pred))
-                    scores['precision'].append(precision_score(y_true, y_pred, zero_division = 1))
-                    scores['recall'].append(recall_score(y_true, y_pred, zero_division = 1))
-
-                    if input_mask_eval:
-                        input_mask = resize(data[i]['mask_inputs'].cpu().numpy()[0][0], (IMG_RESOLUTION, IMG_RESOLUTION), interpolation = INTER_NEAREST)
-                        y_input = input_mask.flatten()
-
-                        scores['dice_input'].append(f1_score(y_true, y_input)) 
-                        scores['iou_input'].append(jaccard_score(y_true, y_input))
-                        scores['precision_input'].append(precision_score(y_true, y_input, zero_division = 1))
-                        scores['recall_input'].append(recall_score(y_true, y_input, zero_division = 1))
-
-                mean_segmentation_loss = torch.mean(torch.stack(batch_segmentation_loss))
-                mean_score_loss = torch.mean(torch.stack(batch_score_loss))
-                total_loss = mean_segmentation_loss + 0.05 * mean_score_loss
-
-                scores['Total Loss'].append(total_loss.item())
-                scores['BCE Loss'].append(mean_segmentation_loss.item())
-                scores['Score Loss'].append(mean_score_loss.item())
                 scores['prediction_time'].append(end_time - start_time)
+                y_true_flat = mask.view(mask.size(0), -1)  # Shape: (N, H * W)
+                y_pred_flat = selected_masks.view(selected_masks.size(0), -1)  # Shape: same
 
-        if return_mean:
-            for key in scores.keys():
-                scores[key] = np.mean(scores[key])
+                y_true_sum = y_true_flat.sum(dim = 1)
+                y_pred_sum = y_pred_flat.sum(dim = 1)
+
+                intersection = (y_true_flat * y_pred_flat).sum(dim = 1)
+                union = y_true_sum + y_pred_sum - intersection
+
+                dice_score = (2 * intersection) / (y_true_sum + y_pred_sum)
+                iou_score = intersection / union
+                precision = intersection / y_pred_sum
+                recall = intersection / y_true_sum
+
+                dice_score = torch.nan_to_num(dice_score, nan = 0.0)
+                iou_score = torch.nan_to_num(iou_score, nan = 0.0)
+                precision = torch.nan_to_num(precision, nan = 0.0)
+                recall = torch.nan_to_num(recall, nan = 0.0)
+
+                scores['dice'].extend(dice_score.cpu().numpy())
+                scores['iou'].extend(iou_score.cpu().numpy())
+                scores['precision'].extend(precision.cpu().numpy())
+                scores['recall'].extend(recall.cpu().numpy())
+
+                if input_mask_eval:
+                    input_masks = torch.stack([torch.from_numpy(d['mask_inputs']).to(self.device).squeeze(0) for d in data])  # Shape: (N, H, W)
+                    input_masks = input_masks.unsqueeze(1)  # Shape: (N, 1, H, W)
+
+                    resized_masks = F.interpolate(input_masks, size = (IMG_RESOLUTION, IMG_RESOLUTION), mode = 'nearest-exact')
+                    resized_masks_flat = resized_masks.view(resized_masks.size(0), -1)
+
+                    y_input_sum = resized_masks_flat.sum(dim = 1)
+                    intersection_input = (y_true_flat * resized_masks_flat).sum(dim = 1)
+                    union_input = y_true_sum + y_input_sum - intersection_input
+
+                    dice_input = (2 * intersection_input) / (y_true_sum + y_input_sum)
+                    iou_input = intersection_input / union_input
+                    precision_input = intersection_input / y_input_sum
+                    recall_input = intersection_input / y_true_sum
+
+                    dice_input = torch.nan_to_num(dice_input, nan = 0.0)
+                    iou_input = torch.nan_to_num(iou_input, nan = 0.0)
+                    precision_input = torch.nan_to_num(precision_input, nan = 0.0)
+                    recall_input = torch.nan_to_num(recall_input, nan = 0.0)
+
+                    scores['dice_input'].extend(dice_input.cpu().numpy())
+                    scores['iou_input'].extend(iou_input.cpu().numpy())
+                    scores['precision_input'].extend(precision_input.cpu().numpy())
+                    scores['recall_input'].extend(recall_input.cpu().numpy())
 
         return scores

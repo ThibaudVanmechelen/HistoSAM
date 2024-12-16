@@ -20,5 +20,8 @@ input_mask_eval = false
 model_type = 'vit_b'    # 'vit_b', 'vit_l', 'vit_h'
 input_size = 1024
 
+[sam2]
+model_type = 'sam2.1_hiera_b+.yaml'
+
 [misc]
 device = 'cuda' # 'cuda' or 'cpu'

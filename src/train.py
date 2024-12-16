@@ -22,7 +22,6 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 from utils.config import load_config
-from utils.focal_loss import SamLoss
 
 
 def train_with_config(config : dict, use_dataset : List[bool] = [True, True, False]):
