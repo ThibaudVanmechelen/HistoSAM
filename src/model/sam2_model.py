@@ -55,40 +55,6 @@ class TrainableSAM2(SAM2ImagePredictor):
         self.optimizer = AdamW(params = self.model.parameters(), lr = lr, weight_decay = weight_decay)
         self.scheduler = StepLR(self.optimizer, step_size = step_size, gamma = gamma)
         self.scaler = GradScaler()
- 
-    def save_embeddings(self, config : dict): # TODO make the config
-        self.model.eval()
-
-        dataset = SAMDataset(root = config.save_embeddings.dataset_path,
-                             prompt_type = {'points' : False, 
-                                            'box' : False, 
-                                            'neg_points' : False, 
-                                            'mask' : False},
-                             n_points = 0,
-                             n_neg_points = 0,
-                             verbose = True,
-                             to_dict = True,
-                             neg_points_inside_box = False,
-                             points_near_center = -1,
-                             random_box_shift = 0,
-                             mask_prompt_type = 'scribble',
-                             box_around_mask = False)
-
-        output_dir = config.save_embeddings.output_path
-        os.makedirs(output_dir, exist_ok = True)
-
-        for i, (data, _) in tqdm(enumerate(dataset), total = len(dataset), desc = 'Saving img embeddings'):
-            with torch.no_grad():
-                sam2_image = self.convert_img_from_sam_to_sam2_format(data['image'])
-                self.set_image(sam2_image)
-
-                features = self._features # do not need to save orig_hw because standard 1024 x 1024 which is specified in to_dict from preprocess.py
-
-            file_name = dataset.images[i]
-            file_name = file_name.split('/')[-2]
-
-            save_path = os.path.join(output_dir, f"{file_name}.pt")
-            torch.save(features, save_path)
     
     def load_weights(self, weight_path : str) -> None:
         self.model.load_state_dict(torch.load(weight_path))

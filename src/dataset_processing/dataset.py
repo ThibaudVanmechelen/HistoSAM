@@ -455,20 +455,22 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
                  random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, neg_points_inside_box : bool = False, 
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
-                 box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False):
+                 box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False, prompt_path : str = None,
+                 img_embeddings_path : str = None):
         """Initialize SAMDataset class.
         Can only be initialized from files obtained from save_img_embeddings.py script.
         """
+        print('Creating dataset...')
         self.root = root
         self.transform = transform
         self.use_img_embeddings = use_img_embeddings
+        self.img_emb_path = img_embeddings_path
 
         self.images = []
         self.masks = []
         self.prompts = []
 
         self.prompt_type = prompt_type
-
         self.verbose = verbose
 
         self.n_points = n_points
@@ -480,10 +482,13 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         self.is_sam2_prompt = is_sam2_prompt
         self.zoom_out = zoom_out
 
-        self.prompts = torch.load(self.root + 'prompts.pt')
-        print(len(self.prompts))
+        print('Loading the prompts...')
+        self.prompts = torch.load(prompt_path)
+        print('Number of prompt types: ', len(self.prompts))
 
-        prompt_type = {'points':True, 'box':True, 'neg_points':True, 'mask':True}
+        for key in self.prompts.keys():
+            print(f'Type {key}: ', len(self.prompts[key]))
+
         self.load_on_cpu = load_on_cpu
         self.filter_files = filter_files
 
@@ -501,8 +506,61 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             self.images = [plt.imread(img) for img in self.images]
             self.masks = [plt.imread(mask) for mask in self.masks]
 
+        self.PROMPT_COMBINATIONS_LIST = {
+            'single': [['points'], ['box'], ['neg_points'], ['mask']],
+            'pair': [['box', 'points'], ['box', 'neg_points'], ['points', 'neg_points'], ['mask', 'points'], ['mask', 'neg_points']],
+            'triple': [['box', 'points', 'neg_points'], ['mask', 'points', 'neg_points']],
+            'all': [['points', 'box', 'neg_points', 'mask']]
+        }
+
+        self.prompt_combinations = self.select_combinations(self.prompt_type, self.PROMPT_COMBINATIONS_LIST)
+        self.nb_combinations = len(self.prompt_combinations)
+
+        print('Selected prompt combinations: ')
+        for c in self.prompt_combinations:
+            print(c)
+
         if self.verbose:
             print('Done!')
+
+    def select_combinations(self, prompt_type : dict, combination_list : dict):
+        active_prompts = [key for key, value in prompt_type.items() if value]
+        nb_active = len(active_prompts)
+
+        valid_combinations = []
+        if nb_active == 1:
+            for comb in combination_list['single']:
+                if comb[0] in active_prompts:
+                    valid_combinations.append(comb)
+
+        elif nb_active == 2:
+            for comb in combination_list['single']:
+                if comb[0] in active_prompts:
+                    valid_combinations.append(comb)
+
+            for comb in combination_list['pair']:
+                if all(prompt in active_prompts for prompt in comb):
+                    valid_combinations.append(comb)
+
+        elif nb_active == 3:
+            for comb in combination_list['single']:
+                if comb[0] in active_prompts:
+                    valid_combinations.append(comb)
+
+            for comb in combination_list['triple']:
+                if all(prompt in active_prompts for prompt in comb):
+                    valid_combinations.append(comb)
+
+        elif nb_active == 4:
+            valid_combinations.append(['box'])
+            valid_combinations.append(['mask'])
+
+            for comb in combination_list['triple']:
+                valid_combinations.append(comb)
+
+            valid_combinations.append(combination_list['all'][0])
+
+        return valid_combinations
 
     def _load_data(self):
         """Load images and masks. Allows to filter files."""
@@ -521,20 +579,21 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                         self.images.append(self.root + 'processed/' + f + '/' + g)
 
         for key in self.prompts:
-            self.prompts[key] = np.delete(self.prompts[key], prompts_to_delete, axis=0) # remove the entries at the indices specified in prompts_to_delete
+            self.prompts[key] = np.delete(self.prompts[key], prompts_to_delete, axis = 0) # remove the entries at the indices specified in prompts_to_delete
     
     def _load_img_embeddings(self):
         """Load image embeddings"""
         self.img_embeddings = []
         
-        for i, f in enumerate(os.listdir(self.root + 'img_embeddings/')):
+        for i, f in enumerate(os.listdir(self.img_emb_path)):
             if self.filter_files is not None: 
                 if not self.filter_files(f):
                     continue
 
-            self.img_embeddings.append(torch.load(self.root + 'img_embeddings/' + f).to('cpu'))
+            path_ = os.path.join(self.img_emb_path, f)
+            self.img_embeddings.append(torch.load(path_).to('cpu')) # TODO see if enough space on the GPU to directly put the embeddings there
         
-    def __getitem__(self, idx:int) -> tuple:
+    def __getitem__(self, idx : int) -> tuple:
         img_idx = idx % len(self.images)
         prompt_idx = idx // len(self.images)
 
@@ -545,13 +604,9 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             img = plt.imread(self.images[img_idx])
             mask = plt.imread(self.masks[img_idx])
 
-        prompt = {'points':None, 'box':None, 'neg_points':None, 'mask':None}
-        prompts_combinaisons = [['mask', 'points', 'neg_points'],
-                                ['mask'],
-                                ['box'],
-                                ['box', 'points', 'neg_points']]
-        
-        for key in prompts_combinaisons[prompt_idx]:
+        prompt = {'points' : None, 'box' : None, 'neg_points' : None, 'mask' : None}
+ 
+        for key in self.prompt_combinations[prompt_idx]:
             prompt[key] = self.prompts[key][img_idx]
 
         if self.use_img_embeddings:
@@ -566,7 +621,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         return img, np.where(mask > 0, 1, 0), prompt
     
     def __len__(self):
-            return len(self.images) * 4
+        return len(self.images) * self.nb_combinations
 
 
 def filter_dataset(file_name, datasets : list):

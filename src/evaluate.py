@@ -5,11 +5,9 @@ import time
 import gc
 import numpy as np
 import torch
-from cv2 import INTER_NEAREST, resize
 from dataset_processing.dataset import AugmentedSamDataset, SAMDataset, SamDatasetFromFiles, filter_dataset
 from dataset_processing.preprocess import collate_fn
 from model.model import load_model
-from sklearn.metrics import f1_score, jaccard_score, precision_score, recall_score
 from torch import nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
@@ -21,58 +19,6 @@ from sam2.build_sam import build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 
 IMG_RESOLUTION = 1024
-
-def evaluate(dataset_path : str, model_path : str, model_type = 'vit_b', n_points : int = 1, batch_size : int = 1, 
-             prompt_type : dict = {'points':False, 'box':False, 'neg_points':False, 'mask':False}, n_neg_points : int = 5, 
-             inside_box : bool = False, points_near_center : bool = False, random_box_shift : bool = 0, mask_prompt_type : str = 'truth', 
-             box_around_mask : bool = False, input_mask_eval : bool = False, device : str = 'cuda') -> dict[list]:
-    """Function to evaluate SAM model. 
-    dataset_path: str, path to the dataset
-    n_points: int, number of points to use in the dataset
-    batch_size: int, batch size to use in the evaluation
-    prompt_type: dict, dictionary with the prompt type to use in the dataset
-    n_neg_points: int, number of negative points to use in the dataset
-    inside_box: bool, if True, the negative points are inside the bounding box
-    points_near_center: bool, if True, the points are near the center of the annotation
-    random_box_shift: bool, if True, the bounding box is randomly shifted
-    mask_prompt_type: str, type of mask prompt to use
-    box_around_mask: bool, if True, the bounding box is around the input mask
-    input_mask_eval: bool, if True, evaluate the input mask too
-    model_path: str, path to the model
-    device: str, device to use for the evaluation
-    Returns: dict, dictionary with the evaluation metrics"""
-    dataset = SAMDataset(dataset_path, prompt_type=prompt_type, n_points=n_points, n_neg_points=n_neg_points, verbose=True, to_dict=True, neg_points_inside_box=inside_box, points_near_center=points_near_center, random_box_shift=random_box_shift, mask_prompt_type=mask_prompt_type, box_around_mask=box_around_mask)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-
-    model = load_model(model_path, model_type)
-    scores = eval_loop(model, dataloader, device, input_mask_eval)
-
-    return scores
-
-
-# def evaluate_with_config(config : dict) -> dict[str,list]:
-#     """Function to evaluate a model with a configuration dictionary. Please refers to load_config() function from .utils.config."""
-#     prompt_type = {'points':config.dataset.points, 'box':config.dataset.box, 'neg_points':config.dataset.negative_points, 'mask':config.dataset.mask_prompt}
-#     valid_dataset = AugmentedSamDataset(root=config.evaluate.valid_dataset_path,
-#                             #prompt_type={'points':config.dataset.points, 'box':config.dataset.box, 'neg_points':config.dataset.negative_points, 'mask':config.dataset.mask_prompt},
-#                             n_points=config.dataset.n_points,
-#                             n_neg_points=config.dataset.n_neg_points,
-#                             verbose=True,
-#                             to_dict=True,
-#                             use_img_embeddings=config.training.use_img_embeddings,
-#                             #neg_points_inside_box=config.dataset.negative_points_inside_box,
-#                             #points_near_center=config.dataset.points_near_center,
-#                             random_box_shift=config.dataset.random_box_shift,
-#                             mask_prompt_type=config.dataset.mask_prompt_type,
-#                             #box_around_mask=config.dataset.box_around_prompt_mask,
-#                             load_on_cpu=True
-#     )
-#     dataloader = DataLoader(valid_dataset, batch_size=config.training.batch_size, shuffle=False, collate_fn=collate_fn)
-
-#     model = load_model(config.sam.checkpoint_path, config.sam.model_type, img_embeddings_as_input=config.training.use_img_embeddings, return_iou=True)
-#     scores = test_loop(model, dataloader, config.misc.device, config.evaluate.input_mask_eval, return_mean=False)
-
-#     return scores
 
 def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpoint_path : str, is_sam2 : bool): # config format should be based on prompting evaluation format
     prompt_type = {
@@ -160,7 +106,6 @@ def evaluate_without_prompts(dataset_path : str, checkpoint_path : str, is_sam2 
     return scores
 
 
-
 def evaluate_with_config(config : dict, use_dataset : List[bool] = [True, True, True]): #TODO check if fromFiles is the right class for testing vs augmented dataset ?
     """Function to evaluate a model with a configuration dictionary. Please refers to load_config() function from .utils.config."""
     prompt_type = {'points':config.dataset.points, 'box':config.dataset.box, 'neg_points':config.dataset.negative_points, 'mask':config.dataset.mask_prompt}
@@ -185,65 +130,6 @@ def evaluate_with_config(config : dict, use_dataset : List[bool] = [True, True, 
     return scores
 
 
-# def eval_loop(model : nn.Module, dataloader : DataLoader, device : str='cuda', input_mask_eval : bool=False, return_mean : bool=True) -> dict:
-#     """Function to evaluate a model on a dataloader.
-#     model: nn.Module, model to evaluate
-#     dataloader: DataLoader, dataloader to use for the evaluation
-#     device: str, device to use for the evaluation
-#     input_mask_eval: bool, if True, evaluate the input mask too
-#     return_mean: bool, if True, return the mean of the evaluation metrics
-#     Returns: dict, dictionary with the evaluation metrics"""
-#     scores = {
-#               'BCE':[], 'prediction_time':[],
-#               'dice':[], 'iou':[], 'precision':[], 'recall':[], 
-#               'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[]
-#              }
-
-#     model.to(device)
-#     model.eval()
-#     model.return_iou = False
-
-#     with torch.no_grad():
-#         for data, mask in tqdm(dataloader):
-#             start_time = time.time()
-#             pred = model(data, multimask_output=True, binary_mask_output=False)
-#             end_time = time.time()
-
-#             loss = nn.BCEWithLogitsLoss()(pred.float(), mask.to(device).float())
-
-#             scores['BCE'].append(loss.item())
-#             scores['prediction_time'].append(end_time - start_time)
-
-#             best_pred = pred.cpu().numpy()
-#             best_pred = np.array(best_pred, dtype = np.uint8)
-
-#             mask = np.array(mask, dtype = np.uint8)
-#             for i in range(len(data)): # going through each item in the batch
-#                 y_pred = best_pred[i].flatten()
-#                 y_true = mask[i].flatten()
-                
-#                 scores['dice'].append(f1_score(y_true, y_pred))
-#                 scores['iou'].append(jaccard_score(y_true, y_pred))
-#                 scores['precision'].append(precision_score(y_true, y_pred, zero_division = 1))
-#                 scores['recall'].append(recall_score(y_true, y_pred, zero_division = 1))
-
-#                 if input_mask_eval:
-#                     input_mask = resize(data[i]['mask_inputs'].cpu().numpy()[0][0], (IMG_RESOLUTION, IMG_RESOLUTION), interpolation = INTER_NEAREST)
-#                     y_input = input_mask.flatten()
-
-#                     scores['dice_input'].append(f1_score(y_true, y_input)) 
-#                     scores['iou_input'].append(jaccard_score(y_true, y_input))
-#                     scores['precision_input'].append(precision_score(y_true, y_input, zero_division = 1))
-#                     scores['recall_input'].append(recall_score(y_true, y_input, zero_division = 1))
-
-#     if return_mean:
-#         for key in scores.keys():
-#             scores[key] = np.mean(scores[key])
-
-#     model.return_iou = True
-
-#     return scores
-
 def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, return_mean : bool = True) -> dict:
     """Function to evaluate a model on a dataloader.
     model: nn.Module, model to evaluate
@@ -253,9 +139,9 @@ def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda',
     return_mean: bool, if True, return the mean of the evaluation metrics
     Returns: dict, dictionary with the evaluation metrics"""
     scores = {
-              'BCE':[], 'prediction_time':[],
               'dice':[], 'iou':[], 'precision':[], 'recall':[], 
-              'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[]
+              'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[],
+              'BCE':[], 'prediction_time':[]
              }
 
     model.to(device)
@@ -331,78 +217,6 @@ def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda',
     model.return_iou = True
 
     return scores
-
-# def test_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, return_mean : bool = True, 
-#               use_automatic_predictor : bool = False, is_sam2 : bool = False) -> dict:
-#     scores = {
-#               'dice':[], 'iou':[], 'precision':[], 'recall':[], 
-#               'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[],
-#               'prediction_time':[]
-#              }
-
-#     if use_automatic_predictor:
-#         if is_sam2 is False:
-#             predictor = SamAutomaticMaskGenerator(model)
-#         else:
-#             predictor = SAM2AutomaticMaskGenerator(model)
-#     else:
-#         model.to(device)
-#         model.eval()
-#         model.return_iou = False
-
-#     with torch.no_grad():
-#         for data, mask in tqdm(dataloader):
-#             if use_automatic_predictor:
-#                 best_pred = []
-#                 unprocessed_imgs = []
-
-#                 for u in range(len(data)):
-#                     unprocessed_imgs.append(data[u]['image'].permute(1, 2, 0).cpu().numpy())
-
-#                 start_time = time.time()
-#                 for u in range(len(data)):
-#                     pred_masks = predictor.generate(unprocessed_imgs[u])
-#                     best_mask = max(pred_masks, key = lambda x: x['predicted_iou'])['segmentation']
-#                     best_pred.append(best_mask)
-
-#                 end_time = time.time()
-
-#             else:
-#                 start_time = time.time()
-#                 pred = model(data, multimask_output = True, binary_mask_output = True)
-#                 end_time = time.time()
-
-#                 best_pred = pred.cpu().numpy()
-
-#             scores['prediction_time'].append(end_time - start_time)
-#             best_pred = np.array(best_pred, dtype = np.uint8)
-
-#             mask = np.array(mask, dtype = np.uint8)
-#             for i in range(len(data)):
-#                 y_pred = np.where(best_pred[i].flatten() > 0, 1, 0)
-#                 y_true = np.where(mask[i].flatten() > 0, 1, 0)
-
-#                 scores['dice'].append(f1_score(y_true, y_pred))
-#                 scores['iou'].append(jaccard_score(y_true, y_pred))
-#                 scores['precision'].append(precision_score(y_true, y_pred, zero_division = 1))
-#                 scores['recall'].append(recall_score(y_true, y_pred, zero_division = 1))
-
-#                 if input_mask_eval:
-#                     input_mask = resize(data[i]['mask_inputs'].cpu().numpy()[0][0], (IMG_RESOLUTION, IMG_RESOLUTION), interpolation = INTER_NEAREST)
-#                     y_input = np.where(input_mask.flatten() > 0, 1, 0)
-
-#                     scores['dice_input'].append(f1_score(y_true, y_input)) 
-#                     scores['iou_input'].append(jaccard_score(y_true, y_input))
-#                     scores['precision_input'].append(precision_score(y_true, y_input, zero_division = 1))
-#                     scores['recall_input'].append(recall_score(y_true, y_input, zero_division = 1))
-
-#     if return_mean:
-#         for key in scores.keys():
-#             scores[key] = np.mean(scores[key])
-
-#     model.return_iou = True
-
-#     return scores
 
 
 def test_loop(model: torch.nn.Module, dataloader: DataLoader, device: str = 'cuda', input_mask_eval: bool = False, return_mean: bool = True,

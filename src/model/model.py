@@ -67,6 +67,7 @@ class TrainableSam(Sam):
             image_embeddings = self.image_encoder(input_images)
 
         outputs = []
+        iou_scores = []
         for i, (image_record, curr_embedding) in enumerate(zip(batched_input, image_embeddings)):
             if "point_coords" in image_record:
                 points = (image_record["point_coords"], image_record["point_labels"])
@@ -90,7 +91,10 @@ class TrainableSam(Sam):
                 input_size=image_record["original_size"],
                 original_size=image_record["original_size"],
             )
-            outputs.append(masks[0][torch.argmax(iou_predictions)]) # outputs the mask with highest iou
+
+            best_mask_idx = torch.argmax(iou_predictions)
+            outputs.append(masks[0][best_mask_idx]) # outputs the mask with highest iou
+            iou_scores.append(iou_predictions[best_mask_idx])
 
         outputs = torch.stack(outputs, dim=0)
 
@@ -98,7 +102,7 @@ class TrainableSam(Sam):
             outputs = torch.where(outputs > self.mask_threshold, 1, 0).float() # make the mask binary (in the original SAM, always binary)
 
         if self.return_iou:
-            return outputs, torch.max(iou_predictions)
+            return outputs, torch.stack(iou_scores, dim = 0)
         
         return outputs
 
@@ -110,7 +114,7 @@ class TrainableSam(Sam):
     
     def get_nb_parameters(self, img_encoder = True):
         """Function to get the number of parameters of the model.
-        img_encoder: bool, If True, return the number of parameters of the image encoder else ignore it. Default: True
+        img_encoder: bool, If True, return the number of parameters with the image encoder else ignore it. Default: True
         Returns: int, number of parameters of the model"""
         if img_encoder:
             return sum(p.numel() for p in self.parameters())
