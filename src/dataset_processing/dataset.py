@@ -23,6 +23,7 @@ from cv2 import (
 from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 from tqdm import tqdm
+from copy import deepcopy
 
 from .preprocess import to_dict
 
@@ -257,7 +258,7 @@ class SAMDataset(AbstractSAMDataset):
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
                  random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, neg_points_inside_box : bool = False, 
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
-                 box_around_mask : bool = False):
+                 box_around_mask : bool = False, is_embedding_saving : bool = False):
         '''Initialize SAMDataset class.
         root: str, path to the dataset directory
         transform: callable, transform to apply to the images and masks
@@ -290,6 +291,7 @@ class SAMDataset(AbstractSAMDataset):
         self.to_dict = to_dict
         self.is_sam2_prompt = is_sam2_prompt
         self.zoom_out = zoom_out
+        self.is_embedding_saving = is_embedding_saving
 
         if random_state is not None:
             torch.manual_seed(random_state) # wrong because set seed in torch and use numpy for random ...
@@ -334,7 +336,12 @@ class SAMDataset(AbstractSAMDataset):
             img, mask = self.transform(img, mask)
 
         if self.to_dict:
-            return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
+            if self.is_embedding_saving:
+                prompt_copy = deepcopy(prompt)
+                return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0), prompt_copy
+            
+            else:
+                return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
 
         return img, np.where(mask > 0, 1, 0), prompt
     
@@ -455,8 +462,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
                  random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, neg_points_inside_box : bool = False, 
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
-                 box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False, prompt_path : str = None,
-                 img_embeddings_path : str = None):
+                 box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False):
         """Initialize SAMDataset class.
         Can only be initialized from files obtained from save_img_embeddings.py script.
         """
@@ -464,11 +470,16 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         self.root = root
         self.transform = transform
         self.use_img_embeddings = use_img_embeddings
-        self.img_emb_path = img_embeddings_path
 
         self.images = []
         self.masks = []
-        self.prompts = []
+        self.img_embeddings = []
+        self.prompts = {
+            'points': [], 
+            'box': [], 
+            'neg_points': [],
+            'mask': []
+        }
 
         self.prompt_type = prompt_type
         self.verbose = verbose
@@ -482,13 +493,6 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         self.is_sam2_prompt = is_sam2_prompt
         self.zoom_out = zoom_out
 
-        print('Loading the prompts...')
-        self.prompts = torch.load(prompt_path)
-        print('Number of prompt types: ', len(self.prompts))
-
-        for key in self.prompts.keys():
-            print(f'Type {key}: ', len(self.prompts[key]))
-
         self.load_on_cpu = load_on_cpu
         self.filter_files = filter_files
 
@@ -496,11 +500,9 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             torch.manual_seed(random_state)
 
         if self.verbose:
-            print('Loading images and masks paths...')
+            print('Loading data...')
 
         self._load_data()
-        if self.use_img_embeddings:
-            self._load_img_embeddings()
 
         if load_on_cpu:
             self.images = [plt.imread(img) for img in self.images]
@@ -578,8 +580,19 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                     else:
                         self.images.append(self.root + 'processed/' + f + '/' + g)
 
+                if g == 'img_embedding.pt' and not self.is_sam2_prompt:
+                    self.img_embeddings.append()
+
+                if g == 'sam2_img_embedding.pt' and self.is_sam2_prompt:
+
+                if g == 'prompt.pt': # TODO check what happens if delete prompt but not image ???
+
         for key in self.prompts:
             self.prompts[key] = np.delete(self.prompts[key], prompts_to_delete, axis = 0) # remove the entries at the indices specified in prompts_to_delete
+
+
+        if self.use_img_embeddings: #TODO
+            self._load_img_embeddings()
     
     def _load_img_embeddings(self):
         """Load image embeddings"""

@@ -40,4 +40,4 @@ class SAM_Loss(nn.Module):
 
         total_loss = self.focal_weight * focal + self.dice_weight * dice + self.iou_weight * iou
 
-        return total_loss, {"focal": focal.item(), "dice": dice.item(), "iou": iou.item()}
+        return total_loss, {'focal' : focal.item(), 'dice' : dice.item(), 'iou' : iou.item()}

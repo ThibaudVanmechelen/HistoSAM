@@ -17,6 +17,7 @@ from model.sam2_model import TrainableSAM2
 from segment_anything import SamAutomaticMaskGenerator
 from sam2.build_sam import build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+from utils.loss import SAM_Loss
 
 IMG_RESOLUTION = 1024
 
@@ -130,7 +131,7 @@ def evaluate_with_config(config : dict, use_dataset : List[bool] = [True, True, 
     return scores
 
 
-def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, return_mean : bool = True) -> dict:
+def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, is_original_loss : bool = False) -> dict:
     """Function to evaluate a model on a dataloader.
     model: nn.Module, model to evaluate
     dataloader: DataLoader, dataloader to use for the evaluation
@@ -139,26 +140,39 @@ def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda',
     return_mean: bool, if True, return the mean of the evaluation metrics
     Returns: dict, dictionary with the evaluation metrics"""
     scores = {
-              'dice':[], 'iou':[], 'precision':[], 'recall':[], 
-              'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[],
-              'BCE':[], 'prediction_time':[]
-             }
+        'total_loss': [], 'focal_loss': [], 'dice_loss': [], 'iou_loss': [],
+        'dice': [], 'iou': [], 'precision': [], 'recall': [], 
+        'dice_input': [], 'iou_input': [], 'precision_input': [], 'recall_input': [],
+        'prediction_time': []
+    }
 
     model.to(device)
     model.eval()
-    model.return_iou = False
+    model.return_iou = True
+
+    if is_original_loss:
+        loss_fn = SAM_Loss()
+    else:
+        loss_fn = nn.BCEWithLogitsLoss()
 
     with torch.no_grad():
         for data, mask in tqdm(dataloader):
             mask = torch.tensor(mask, dtype = torch.float32, device = device)
 
             start_time = time.time()
-            best_pred = model(data, multimask_output = True, binary_mask_output = False)
+            best_pred, pred_iou = model(data, multimask_output = True, binary_mask_output = False)
             end_time = time.time()
 
-            loss = nn.BCEWithLogitsLoss()(best_pred.float(), mask)
+            if is_original_loss:
+                loss, loss_parts = loss_fn(best_pred.float(), mask.float(), pred_iou.float())
 
-            scores['BCE'].append(loss.item())
+                scores['focal_loss'].append(loss_parts['focal'])
+                scores['dice_loss'].append(loss_parts['dice'])
+                scores['iou_loss'].append(loss_parts['iou'])
+            else:
+                loss = loss_fn(best_pred.float(), mask.float())
+
+            scores['total_loss'].append(loss.item())
             scores['prediction_time'].append(end_time - start_time)
 
             best_pred = torch.where(best_pred > model.mask_threshold, 1, 0).float() # to obtain binary mask for the metrics
@@ -214,8 +228,6 @@ def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda',
                 scores['precision_input'].extend(precision_input.cpu().numpy())
                 scores['recall_input'].extend(recall_input.cpu().numpy())
                 
-    model.return_iou = True
-
     return scores
 
 

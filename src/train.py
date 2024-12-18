@@ -19,68 +19,9 @@ from segment_anything.modeling.sam import Sam
 from torch import nn
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-from utils.config import load_config
 from utils.loss import SAM_Loss
-
-
-# def train_with_config(config : dict, use_dataset : List[bool] = [True, True, False]):
-#     """Train a model with a configuration dictionary. Please refers to load_config() function from .utils.config."""
-#     model = load_model(config.sam.checkpoint_path, config.sam.model_type, img_embeddings_as_input=config.training.use_img_embeddings, return_iou=True).to('cuda')
-#     print(model.get_nb_parameters(img_encoder = True))
-
-#     model = nn.DataParallel(model) # useful when multiple GPUs are available
-
-#     train_dataset = SamDatasetFromFiles(root=config.cytomine.dataset_path,
-#                             #prompt_type={'points':config.dataset.points, 'box':config.dataset.box, 'neg_points':config.dataset.negative_points, 'mask':config.dataset.mask_prompt},
-#                             n_points=config.dataset.n_points,
-#                             n_neg_points=config.dataset.n_neg_points,
-#                             verbose=True,
-#                             to_dict=True,
-#                             use_img_embeddings=config.training.use_img_embeddings,
-#                             random_box_shift=config.dataset.random_box_shift,
-#                             mask_prompt_type=config.dataset.mask_prompt_type,
-#                             #box_around_mask=config.dataset.box_around_prompt_mask,
-#                             load_on_cpu=True,
-#                             filter_files=lambda x: filter_dataset(x, use_dataset)
-#     )
-
-#     valid_dataset = SamDatasetFromFiles(root=config.evaluate.valid_dataset_path,
-#                             #prompt_type={'points':config.dataset.points, 'box':config.dataset.box, 'neg_points':config.dataset.negative_points, 'mask':config.dataset.mask_prompt},
-#                             n_points=config.dataset.n_points,
-#                             n_neg_points=config.dataset.n_neg_points,
-#                             verbose=True,
-#                             to_dict=True,
-#                             use_img_embeddings=config.training.use_img_embeddings,
-#                             random_box_shift=config.dataset.random_box_shift,
-#                             mask_prompt_type=config.dataset.mask_prompt_type,
-#                             load_on_cpu=True,
-#                             filter_files=lambda x: filter_dataset(x, use_dataset)
-#     )
-
-#     if config.misc.wandb:
-#         wandb.init(project='samsam',
-#                     config=config)
-
-#     trainloader = DataLoader(train_dataset, batch_size=config.training.batch_size, shuffle=True, collate_fn=collate_fn)
-#     validloader = DataLoader(valid_dataset, batch_size=config.training.batch_size, shuffle=False, collate_fn=collate_fn)
-
-#     optimizer = torch.optim.Adam(model.parameters(), lr=config.training.lr)
-#     loss_fn = BCEWithLogitsLoss()
-
-#     if config.training.train_from_last_checkpoint:
-#         checkpoint = torch.load(config.training.model_save_dir+'/last_checkpoint.pt')
-
-#         model.load_state_dict(torch.load(config.training.model_save_dir+'/last_model.pt'))
-#         optimizer.load_state_dict(checkpoint['optimizer'])
-
-#         return train_from_last_checkpoint(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, config.misc.device, use_wandb=config.misc.wandb, last_epoch=checkpoint['epoch'])
-    
-#     if config.training.eval_every_epoch:
-#         return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, config.misc.device, use_wandb=config.misc.wandb)
-#     else:
-#         return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, None, config.training.model_save_dir, config.misc.device, use_wandb=config.misc.wandb)
 
 def train_with_config(config: dict, checkpoint_path : str, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool) -> dict:
     model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.training.use_img_embeddings, return_iou = True).to(config.misc.device)
@@ -109,9 +50,7 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
         mask_prompt_type = config.training.mask_prompt_type,
         box_around_mask = config.training.box_around_prompt_mask,
         filter_files = None,
-        load_on_cpu = True,
-        prompt_path = config.training.prompt_path,
-        img_embeddings_path = config.training.img_embeddings_path
+        load_on_cpu = True
     )
 
     trainloader = DataLoader(train_dataset, batch_size = config.training.batch_size, shuffle = True, collate_fn = collate_fn)
@@ -133,9 +72,7 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
             mask_prompt_type = config.training.mask_prompt_type,
             box_around_mask = config.training.box_around_prompt_mask,
             filter_files = None,
-            load_on_cpu = True,
-            prompt_path = config.validation.prompt_path,
-            img_embeddings_path = config.validation.img_embeddings_path
+            load_on_cpu = True
         )
 
         validloader = DataLoader(valid_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
@@ -168,11 +105,11 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
         model.load_state_dict(torch.load(config.training.last_model_path))
         optimizer.load_state_dict(checkpoint['optimizer'])
 
-        return train_from_last_checkpoint(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
+        return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
                                           config.misc.device, use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], is_original_loss = use_original_sam_loss)
     
     return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
-                      config.misc.device, use_wandb = config.misc.wandb, is_original_loss = use_original_sam_loss)
+                      config.misc.device, use_wandb = config.misc.wandb, last_epoch = -1, is_original_loss = use_original_sam_loss)
 
 def data_to_gpu(data : list[dict], device : str = 'cuda') -> list[dict]:
     """Move data to a device."""
@@ -185,7 +122,7 @@ def data_to_gpu(data : list[dict], device : str = 'cuda') -> list[dict]:
 
 def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epochs : int, loss_fn : callable, 
                evalloader : DataLoader = None, model_save_dir : str = None, device : str = 'cpu', verbose : bool = True, 
-               use_wandb : bool = False, is_original_loss : bool = False) -> dict:
+               use_wandb : bool = False, last_epoch : int = -1, eval_frequency : int = 1, is_original_loss : bool = False) -> dict:
     """Function to train a model on a dataloader.
     model: nn.Module, model to train
     trainloader: DataLoader, dataloader to use for the training
@@ -198,33 +135,64 @@ def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epo
     best_loss = float('inf')
     model.return_iou = True
 
-    for epoch in range(epochs):
-        losses = []
+    scores = {
+        'training_total_loss': [], 'training_focal_loss': [], 'training_dice_loss': [], 'training_iou_loss': [],
+        'validation_total_loss': [], 'validation_focal_loss': [], 'validation_dice_loss': [], 'validation_iou_loss': [],
+        'validation_dice': [], 'validation_iou': [], 'validation_precision': [], 'validation_recall': [], 'validation_prediction_time': []
+    }
+    
+    start_epoch = last_epoch + 1 if last_epoch >= 0 else 0
+    for epoch in range(start_epoch, epochs):
+        total_losses = []
+        focal_losses = []
+        dice_losses = []
+        iou_losses = []
 
         model.train()
         for data, mask in tqdm(trainloader, disable = not verbose, desc = f'Epoch {epoch + 1}/{epochs} - Training'):
-            data = data_to_gpu(data, 'cuda')
-            mask = mask.to('cuda')
+            data = data_to_gpu(data, device)
+            mask = mask.to(device)
     
             optimizer.zero_grad()
             pred_model, pred_iou = model(data, multimask_output = True, binary_mask_output = False)
 
             if is_original_loss:
-                loss, ... = loss_fn(pred_model.float(), mask.float(), pred_iou.float())
+                loss, loss_parts = loss_fn(pred_model.float(), mask.float(), pred_iou.float())
+
+                focal_losses.append(loss_parts['focal'])
+                dice_losses.append(loss_parts['dice'])
+                iou_losses.append(loss_parts['iou'])
             else:
                 loss = loss_fn(pred_model.float(), mask.float())
 
             loss.backward()
 
             optimizer.step()
-            losses.append(loss.item())
+            total_losses.append(loss.item())
         
-        mean_loss = sum(losses) / len(losses)
+        mean_total_loss = sum(total_losses) / len(total_losses)
+        scores['training_total_loss'].append(mean_total_loss)
+
+        if is_original_loss:
+            mean_focal_loss = sum(focal_losses) / len(focal_losses)
+            mean_dice_loss = sum(dice_losses) / len(dice_losses)
+            mean_iou_loss = sum(iou_losses) / len(iou_losses)
+
+            scores['training_focal_loss'].append(mean_focal_loss)
+            scores['training_dice_loss'].append(mean_dice_loss)
+            scores['training_iou_loss'].append(mean_iou_loss)
+
         if verbose:
-            print(f'Loss: {mean_loss}')
+            if is_original_loss:
+                print(f'Training - Mean Total Loss: {mean_total_loss}, Focal Loss: {mean_focal_loss}, Dice Loss: {mean_dice_loss}, IoU: {mean_iou_loss}')
+            else:
+                print(f'Training - Mean Total Loss: {mean_total_loss}')
 
         if use_wandb:
-            wandb.log({"loss": mean_loss})
+            if is_original_loss:
+                wandb.log({'total_loss': mean_total_loss, 'focal_loss': mean_focal_loss, 'dice_loss': mean_dice_loss, 'iou_loss': mean_iou_loss})
+            else:
+                wandb.log({'total_loss': mean_total_loss})
 
         if model_save_dir is not None:
             model_save_path = os.path.join(model_save_dir, 'last_model.pt')
@@ -233,87 +201,52 @@ def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epo
             torch.save(model.state_dict(), model_save_path)
             torch.save({'epoch': epoch, 'optimizer': optimizer.state_dict()}, checkpoint_save_path)
 
-        if evalloader is not None:
-            scores = eval_loop(model, evalloader, device)
-            print(f'Evaluation - BCE: {scores["BCE"]}, Dice: {scores["dice"]}, IoU: {scores["iou"]}, Precision: {scores["precision"]}, Recall: {scores["recall"]}, Time: {scores['prediction_time']}')
+        if evalloader is not None and epoch % eval_frequency == 0:
+            scores_eval = eval_loop(model, evalloader, device, is_original_loss = is_original_loss)
+            scores_eval = { key: sum(value) / len(value) if value else 0 for key, value in scores_eval.items() }
 
-            if use_wandb:
-                wandb.log({"bce": scores["BCE"], "dice": scores["dice"], "iou": scores["iou"], "precision": scores["precision"], "recall": scores["recall"], "time": scores['prediction_time'], "loss": sum(losses)/len(losses)})
-            
-            if best_loss > scores['BCE']:
-                best_loss = scores['BCE'] 
-                torch.save(model.state_dict(), f'{model_save_dir}/best_model.pt')
+            if is_original_loss:
+                print(f'''Evaluation - Total Loss: {scores_eval["total_loss"]}, 
+                                        Focal Loss: {scores_eval["focal_loss"]},
+                                        Dice Loss: {scores_eval["dice_loss"]},
+                                        IoU Loss: {scores_eval["iou_loss"]},
+                                        Dice: {scores_eval["dice"]}, 
+                                        IoU: {scores_eval["iou"]}, 
+                                        Precision: {scores_eval["precision"]}, 
+                                        Recall: {scores_eval["recall"]}, 
+                                        Time: {scores_eval["prediction_time"]}''')
 
-    return scores
+                if use_wandb:
+                    wandb.log({"eval_total_loss": scores_eval["total_loss"],
+                               "eval_focal_loss": scores_eval["focal_loss"],
+                               "eval_dice_loss": scores_eval["dice_loss"],
+                               "eval_iou_loss": scores_eval["iou_loss"],
+                               "eval_dice": scores_eval["dice"],
+                               "eval_iou": scores_eval["iou"],
+                               "eval_precision": scores_eval["precision"], 
+                               "eval_recall": scores_eval["recall"], 
+                               "eval_time": scores_eval["prediction_time"]})
 
-def train_from_last_checkpoint(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epochs : int, loss_fn : callable, evalloader : DataLoader = None, 
-                               model_save_dir : str = None, device : str = 'cpu', verbose : bool = True, use_wandb : bool = False, last_epoch : int = 0) -> dict:
-    """Function to train a model from a last checkpoint on a dataloader.
-    model: nn.Module, model to train
-    trainloader: DataLoader, dataloader to use for the training
-    optimizer: Adam, optimizer to use for the training
-    epochs: int, number of epochs to train the model
-    evalloader: DataLoader, If provided, evaluate the model at each epochs on it. Default: None
-    model_save_dir: str, If provided, save the model at each epochs. Also save the best model (evaluation loss) if evalloader is provided. Default: None
-    device: str, device to use for the training
-    last_epoch: int, last epoch trained. Default: 0
-    Returns: dict, dictionary with the training metrics"""
-    best_loss = float('inf')
+            else:
+                print(f'''Evaluation - Total Loss: {scores_eval["total_loss"]}, 
+                                        Dice: {scores_eval["dice"]}, 
+                                        IoU: {scores_eval["iou"]}, 
+                                        Precision: {scores_eval["precision"]}, 
+                                        Recall: {scores_eval["recall"]}, 
+                                        Time: {scores_eval["prediction_time"]}''')
 
-    for epoch in range(last_epoch, epochs):
-        losses = []
+                if use_wandb:
+                    wandb.log({"eval_total_loss": scores_eval["total_loss"],
+                               "eval_dice": scores_eval["dice"],
+                               "eval_iou": scores_eval["iou"],
+                               "eval_precision": scores_eval["precision"], 
+                               "eval_recall": scores_eval["recall"], 
+                               "eval_time": scores_eval["prediction_time"]})
 
-        for data, mask in tqdm(trainloader, disable=not verbose, desc=f'Epoch {epoch + 1}/{epochs} - Training'):
-            mask = mask.to(device)
-
-            optimizer.zero_grad()
-            pred_model, _ = model(data, multimask_output = True, binary_mask_output = False)
-
-            loss = loss_fn(pred_model.float(), mask.float())
-            loss.backward()
-
-            optimizer.step()
-            losses.append(loss.item())
-
-        if use_wandb:
-            wandb.log({"loss": sum(losses)/len(losses)})
-
-        if verbose:
-            print(f'Loss: {sum(losses)/len(losses)}')
-
-        if model_save_dir is not None:
-            torch.save(model.state_dict(), f'{model_save_dir}/last_model.pt')
-            torch.save({'epoch': epoch, 'optimizer': optimizer.state_dict()}, f'{model_save_dir}/last_checkpoint.pt')
-
-        if evalloader is not None:
-            scores = eval_loop(model, evalloader, device)
-            print(f'Evaluation - Dice: {scores["dice"]}, IoU: {scores["iou"]}, Precision: {scores["precision"]}, Recall: {scores["recall"]}, Time: {scores['prediction_time']}')
-
-            if use_wandb:
-                wandb.log({"dice": scores["dice"], "iou": scores["iou"], "precision": scores["precision"], "recall": scores["recall"], "time": scores['prediction_time']})
-
-            if best_loss > scores['dice']:
-                best_loss = scores['dice'] 
-                torch.save(model.state_dict(), f'{model_save_dir}/best_model.pt')
+            if best_loss > scores_eval["total_loss"]:
+                best_loss = scores_eval["total_loss"]
+                best_model_save_path = os.path.join(model_save_dir, 'best_model.pt')
+                
+                torch.save(model.state_dict(), best_model_save_path)
 
     return scores
-
-if __name__ == '__main__':
-    parser = ArgumentParser(description='Train a model on a dataset')
-    parser.add_argument('--config', required=False, type=str, help='Path to the configuration file', default='config.toml')
-
-    args = parser.parse_args()
-    config = load_config(args.config)
-    scores = train_with_config(config)
-
-    dice_scores = scores['dice']
-    iou_scores = scores['iou']
-    precision_scores = scores['precision']
-    recall_scores = scores['recall']
-    prediction_times = scores['prediction_time']
-
-    print(f'Mean Dice score: {np.mean(dice_scores)}')
-    print(f'Mean IoU score: {np.mean(iou_scores)}')
-    print(f'Mean Precision score: {np.mean(precision_scores)}')
-    print(f'Mean Recall score: {np.mean(recall_scores)}')
-    print(f'Mean Prediction time: {np.mean(prediction_times)}')
