@@ -106,10 +106,10 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
         optimizer.load_state_dict(checkpoint['optimizer'])
 
         return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
-                                          config.misc.device, use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], is_original_loss = use_original_sam_loss)
+                                          config.misc.device, use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
     
     return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
-                      config.misc.device, use_wandb = config.misc.wandb, last_epoch = -1, is_original_loss = use_original_sam_loss)
+                      config.misc.device, use_wandb = config.misc.wandb, last_epoch = -1, eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
 
 def data_to_gpu(data : list[dict], device : str = 'cuda') -> list[dict]:
     """Move data to a device."""

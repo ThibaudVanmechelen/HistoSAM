@@ -15,11 +15,8 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
 from cv2 import INTER_NEAREST, resize
-from sklearn.metrics import f1_score, jaccard_score, precision_score, recall_score
 
 from dataset_processing.dataset import (
-    SAMDataset,
-    AugmentedSamDataset,
     SamDatasetFromFiles,
     filter_dataset,
 )
@@ -27,6 +24,7 @@ from dataset_processing.preprocess import collate_fn
 
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
+from utils.loss import SAM_Loss, Custom_SAM2_Loss
 
 IMG_RESOLUTION = 1024
 
@@ -37,28 +35,30 @@ class TrainableSAM2(SAM2ImagePredictor):
     training down by computing unnecessary gradients.
     """
     def __init__(self, finetuned_model_name : str, cfg : str, checkpoint : str, mode : str,
-                 do_train_prompt_encoder : bool, do_train_mask_decoder : bool, img_embeddings_as_input : bool, device : str):
-        model = build_sam2(config_file = cfg,  ckpt_path = checkpoint, device = device, mode = mode,  apply_postprocessing = True)
+                 do_train_prompt_encoder : bool, do_train_mask_decoder : bool, img_embeddings_as_input : bool, device : str, weight_path : str = None):
+        model = build_sam2(config_file = cfg,  ckpt_path = checkpoint, device = device, mode = mode,  apply_postprocessing = True) # Note: mode is only really useful when using eval, otherwise does not do anything: https://github.com/facebookresearch/sam2/blob/main/sam2/build_sam.py
         super().__init__(model)
 
         self.finetuned_model_name = finetuned_model_name
         self.img_embeddings_as_input = img_embeddings_as_input
-        self.device = device
+        self.running_device = device
+
+        if weight_path is not None:
+            self.model.load_state_dict(torch.load(weight_path))
+
+        self.do_train_prompt_encoder = do_train_prompt_encoder
+        self.do_train_mask_decoder = do_train_mask_decoder
 
         if do_train_prompt_encoder:
-            self.model.sam_prompt_encoder.train(do_train_prompt_encoder)
+            self.model.sam_prompt_encoder.train(True)
 
         if do_train_mask_decoder:
-            self.model.sam_mask_decoder.train(do_train_mask_decoder)
+            self.model.sam_mask_decoder.train(True)
 
     def setup_training_parameters(self, lr : float, weight_decay : float, step_size : int, gamma : float):
         self.optimizer = AdamW(params = self.model.parameters(), lr = lr, weight_decay = weight_decay)
         self.scheduler = StepLR(self.optimizer, step_size = step_size, gamma = gamma)
         self.scaler = GradScaler()
-    
-    def load_weights(self, weight_path : str) -> None:
-        self.model.load_state_dict(torch.load(weight_path))
-        self.model.eval()
 
     def move_to_gpu(self, data : list[dict], device : str = 'cuda') -> list[dict]:
         """Move data to a device."""
@@ -69,7 +69,7 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return data
     
-    def load_embedding_to_model(self, data : list[dict]): # to device ??????
+    def load_embedding_to_model(self, data : list[dict]):
         self._orig_hw = []
         image_embeds = []
         high_res_feats = []
@@ -83,11 +83,11 @@ class TrainableSAM2(SAM2ImagePredictor):
             image_embeds.append(temp_embed)
             high_res_feats.append(temp_res)
 
-        batched_image_embed = torch.stack(image_embeds, dim = 0).to(self.device)
+        batched_image_embed = torch.stack(image_embeds, dim = 0).to(self.running_device)
 
         batched_high_res_feats = []
         for u in range(len(high_res_feats[0])):
-            batched_feature = torch.stack([feat[u] for feat in high_res_feats], dim = 0).to(self.device)
+            batched_feature = torch.stack([feat[u] for feat in high_res_feats], dim = 0).to(self.running_device)
             batched_high_res_feats.append(batched_feature)
     
         self._features = {"image_embed": batched_image_embed, "high_res_feats": batched_high_res_feats}
@@ -128,89 +128,114 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return sam2_prompts
     
-    def train_model(self, config : dict, use_dataset : List[bool]):
-        train_dataset = SamDatasetFromFiles(root = config.cytomine.dataset_path,
-                                prompt_type = {'points' : config.dataset.points, 
-                                               'box' : config.dataset.box, 
-                                               'neg_points' : config.dataset.negative_points, 
-                                               'mask' : config.dataset.mask_prompt},
-                                n_points = config.dataset.n_points,
-                                n_neg_points = config.dataset.n_neg_points,
-                                verbose = True,
-                                to_dict = True,
-                                use_img_embeddings = config.training.use_img_embeddings,
-                                random_box_shift = config.dataset.random_box_shift,
-                                mask_prompt_type = config.dataset.mask_prompt_type,
-                                box_around_mask = config.dataset.box_around_prompt_mask,
-                                load_on_cpu = True,
-                                filter_files = lambda x: filter_dataset(x, use_dataset)
+    def train_model(self, config : dict, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool):
+        print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()) / 1e6:.2f}M")
+
+        prompt_type = {
+            'points' : config.training.points, 
+            'box' : config.training.box, 
+            'neg_points' : config.training.negative_points, 
+            'mask' : config.training.mask_prompt
+        }
+
+        train_dataset = SamDatasetFromFiles(
+            root = training_dataset_path,
+            transform = None,
+            use_img_embeddings = config.training.use_img_embeddings,
+            prompt_type = prompt_type,
+            n_points = config.training.n_points,
+            n_neg_points = config.training.n_neg_points,
+            verbose = True,
+            to_dict = True,
+            is_sam2_prompt = True,
+            neg_points_inside_box = config.training.negative_points_inside_box,
+            points_near_center = config.training.points_near_center,
+            random_box_shift = config.training.random_box_shift,
+            mask_prompt_type = config.training.mask_prompt_type,
+            box_around_mask = config.training.box_around_prompt_mask,
+            filter_files = None,
+            load_on_cpu = True
         )
 
-        valid_dataset = SamDatasetFromFiles(root = config.evaluate.valid_dataset_path,
-                                prompt_type = {'points' : config.dataset.points, 
-                                               'box' : config.dataset.box, 
-                                               'neg_points' : config.dataset.negative_points, 
-                                               'mask' : config.dataset.mask_prompt},
-                                n_points = config.dataset.n_points,
-                                n_neg_points = config.dataset.n_neg_points,
-                                verbose = True,
-                                to_dict = True,
-                                use_img_embeddings = config.training.use_img_embeddings,
-                                random_box_shift = config.dataset.random_box_shift,
-                                mask_prompt_type = config.dataset.mask_prompt_type,
-                                load_on_cpu = True,
-                                filter_files = lambda x: filter_dataset(x, use_dataset)
-        )
+        trainloader = DataLoader(train_dataset, batch_size = config.training.batch_size, shuffle = True, collate_fn = collate_fn)
+
+        if validation_dataset_path is not None:
+            valid_dataset = SamDatasetFromFiles(
+                root = validation_dataset_path,
+                transform = None,
+                use_img_embeddings = config.validation.use_img_embeddings,
+                prompt_type = prompt_type,
+                n_points = config.training.n_points,
+                n_neg_points = config.training.n_neg_points,
+                verbose = True,
+                to_dict = True,
+                is_sam2_prompt = True,
+                neg_points_inside_box = config.training.negative_points_inside_box,
+                points_near_center = config.training.points_near_center,
+                random_box_shift = config.training.random_box_shift,
+                mask_prompt_type = config.training.mask_prompt_type,
+                box_around_mask = config.training.box_around_prompt_mask,
+                filter_files = None,
+                load_on_cpu = True
+            )
+
+            validloader = DataLoader(valid_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
+        else:
+            validloader = None
 
         if config.misc.wandb:
-            wandb.init(project = config.wandb.name, config = config)
+            wandb.init(project = config.misc.project_name, config = config)
 
-        trainloader = DataLoader(train_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
-        validloader = DataLoader(valid_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
-
-        if config.training.eval_every_epoch:
-            return self.train_loop(epochs = config.training.epochs, 
-                                   trainloader = trainloader,
-                                   device = config.misc.device,
-                                   lr = config.training.lr,
-                                   weight_decay = config.training.weight_decay,
-                                   step_size = config.training.step_size,
-                                   gamma = config.training.gamma,
-                                   evalloader = validloader,
-                                   model_save_dir = config.training.model_save_dir,
-                                   use_wandb = config.misc.wandb, 
-                                   input_mask_eval = config.evaluate.input_mask_eval)
+        if use_original_sam_loss:
+            loss_fn = SAM_Loss(is_sam2_loss = True)
         else:
-            return self.train_loop(epochs = config.training.epochs, 
-                                   trainloader = trainloader,
-                                   device = config.misc.device,
-                                   lr = config.training.lr,
-                                   weight_decay = config.training.weight_decay,
-                                   step_size = config.training.step_size,
-                                   gamma = config.training.gamma,
-                                   evalloader = None,
-                                   model_save_dir = config.training.model_save_dir,
-                                   use_wandb = config.misc.wandb, 
-                                   input_mask_eval = config.evaluate.input_mask_eval)
+            loss_fn = Custom_SAM2_Loss()
+
+        self.setup_training_parameters(lr = config.training.lr, weight_decay = config.training.weight_decay, 
+                                       step_size = config.training.step_size, gamma = config.training.gamma)
+
+        if config.training.train_from_last_checkpoint:
+            checkpoint = torch.load(config.training.last_checkpoint_path)
+            optimizer.load_state_dict(checkpoint['optimizer']) # TODO
+
+            return self.train_loop(trainloader, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
+                                            use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], 
+                                            eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
+        
+        return self.train_loop(trainloader, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
+                        use_wandb = config.misc.wandb, last_epoch = -1, eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
     
-    def train_loop(self, epochs : int, trainloader : DataLoader, device : str, lr : float = 0.0001, weight_decay : float = 0.0001, step_size : int = 500, gamma : float = 0.2, verbose : bool = True,
-                    evalloader : DataLoader = None, model_save_dir : str = None,  use_wandb : bool = False, input_mask_eval : bool = False) -> dict:
+    def train_loop(self, trainloader : DataLoader, epochs : int, loss_fn : callable, evalloader : DataLoader = None, 
+                   model_save_dir : str = None, verbose : bool = True, use_wandb : bool = False, last_epoch : int = -1, 
+                   eval_frequency : int = 1, is_original_loss : bool = False) -> dict:
         """https://www.datacamp.com/tutorial/sam2-fine-tuning"""
-        self.setup_training_parameters(lr = lr, weight_decay = weight_decay, step_size = step_size, gamma = gamma)
         best_loss = float('inf')
 
-        for epoch in range(epochs):
-            epoch_losses = []
-            epoch_segmentation_losses = []
-            epoch_score_losses = []
-            epoch_mean_ious = []
+        scores = {
+            'training_total_loss': [], 'training_focal_loss': [], 'training_dice_loss': [], 'training_iou_loss': [], 'training_seg_loss': [], 'training_score_loss': [],
+            'validation_total_loss': [], 'validation_focal_loss': [], 'validation_dice_loss': [], 'validation_iou_loss': [], 'validation_seg_loss': [], 'validation_score_loss': [],
+            'validation_dice': [], 'validation_iou': [], 'validation_precision': [], 'validation_recall': [], 'validation_prediction_time': []
+        }
+
+        start_epoch = last_epoch + 1 if last_epoch >= 0 else 0
+        for epoch in range(start_epoch, epochs):
+            total_losses = []
+            iou_losses = []
+
+            if is_original_loss:
+                focal_losses = []
+                dice_losses = []
+
+            else:
+                segmentation_losses = []
+                score_losses = []
 
             for data, mask in tqdm(trainloader, disable = not verbose, desc = f'Epoch {epoch + 1}/{epochs} - Training'):
-                data = self.move_to_gpu(data, device)
-                mask = mask.to(device)
+                data = self.move_to_gpu(data, self.running_device)
+                mask = mask.to(self.running_device)
 
                 with autocast(): # modifying floating point precision to speed up the training
-                    if self.img_embeddings_as_input:
+                    if self.img_embeddings_as_input: # TODO
                         self.reset_predictor()
                         
                         self._is_image_set = True
@@ -220,7 +245,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                             
                     else:
                         sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
-                        self.set_image_batch(sam2_image_batch)
+                        self.set_image_batch(sam2_image_batch) # this function does not compute grad for the img encoder
 
                     batch_segmentation_loss = []
                     batch_score_loss = []
@@ -355,43 +380,22 @@ class TrainableSAM2(SAM2ImagePredictor):
                 
         return scores
     
-    def evaluate_model(self, config : dict, use_dataset : List[bool] = [True, True, True]):
-        test_dataset = SamDatasetFromFiles(root = config.evaluate.test_dataset_path,
-                                prompt_type = {'points' : config.dataset.points, 
-                                               'box' : config.dataset.box, 
-                                               'neg_points' : config.dataset.negative_points, 
-                                               'mask' : config.dataset.mask_prompt},
-                                n_points = config.dataset.n_points,
-                                n_neg_points = config.dataset.n_neg_points,
-                                verbose = True,
-                                to_dict = True,
-                                use_img_embeddings = config.training.use_img_embeddings,
-                                random_box_shift = config.dataset.random_box_shift,
-                                mask_prompt_type = config.dataset.mask_prompt_type,
-                                box_around_mask = config.dataset.box_around_prompt_mask,
-                                load_on_cpu = True,
-                                filter_files = lambda x: filter_dataset(x, use_dataset)
-        )
-
-        dataloader = DataLoader(test_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
-        scores = self.eval_loop(dataloader = dataloader, 
-                                input_mask_eval = config.evaluate.input_mask_eval)
-
-        return scores
-    
-    def eval_loop(self, dataloader : DataLoader, input_mask_eval : bool) -> dict:
+    def eval_loop(self, dataloader : DataLoader, input_mask_eval : bool, is_original_loss : bool = False) -> dict:
         scores = {
-                'Total Loss':[], 'BCE Loss':[], 'Score Loss':[],
-                'prediction_time':[],
-                'dice':[], 'iou':[], 'precision':[], 'recall':[], 
-                'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[]
-                }
+            'total_loss': [], 'focal_loss': [], 'dice_loss': [], 'iou_loss': [], 'seg_loss': [], 'score_loss': [],
+            'dice': [], 'iou': [], 'precision': [], 'recall': [], 'prediction_time': []
+        }
 
         self.model.eval()
 
+        if is_original_loss:
+            loss_fn = SAM_Loss(is_sam2_loss = True)
+        else:
+            loss_fn = Custom_SAM2_Loss()
+
         with torch.no_grad():
             for data, mask in tqdm(dataloader):
-                mask = mask.to(device = self.device, dtype = torch.float32)
+                mask = mask.to(device = self.running_device, dtype = torch.float32)
     
                 prompts_record = self.convert_batch_prompts_from_sam_to_sam2_format(data)
                 sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
@@ -408,7 +412,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                 else:
                     self.set_image_batch(sam2_image_batch)
 
-                pred_masks, scores, _ = self.predict_batch(
+                pred_masks, pred_scores, _ = self.predict_batch(
                     point_coords_batch = prompts_record.get("point_coords", None),
                     point_labels_batch = prompts_record.get("point_labels", None),
                     box_batch =  prompts_record.get("boxes", None),
@@ -416,17 +420,22 @@ class TrainableSAM2(SAM2ImagePredictor):
                     multimask_output = True,
                     return_logits = True,
                     normalize_coords = True
-                ) # pred_masks are logit masks
+                ) # pred_masks are binary masks
                 end_time = time.time()
 
                 assert len(pred_masks) == len(data), "There should be a prediction for each element in the batch."
 
-                pred_masks = torch.stack([torch.tensor(pred, device = self.device) for pred in pred_masks])  # Shape: (N, C, H, W)
-                scores = torch.stack([torch.tensor(score, device = self.device) for score in scores])  # Shape: (N, C)
-                
-                most_probable_mask_idx = scores.argmax(dim = 1)  # Shape: (N)
-                selected_scores = scores.gather(1, most_probable_mask_idx.unsqueeze(1)).squeeze(1)  # Shape: (N), unsqueeze is to add a dim because it is needed by gather, gather 1 is to select accros dim 1, and squeeze is to remove the , 1 at the end
-                selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx]  # Shape: (N, H, W), extracting the masks
+                pred_masks = torch.stack([torch.tensor(pred, device = self.running_device) for pred in pred_masks])  # Shape: (N, C, H, W)
+                pred_scores = torch.stack([torch.tensor(score, device = self.running_device) for score in pred_scores])  # Shape: (N, C)
+
+                most_probable_mask_idx = pred_scores.argmax(dim = 1)  # Shape: (N)
+                selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx, :, :]  # Shape: (N, H, W), extracting the masks
+                # take iou and make (N, 1) tensor
+
+
+
+
+
 
                 seg_loss = BCEWithLogitsLoss(selected_masks, mask.float())
 
@@ -441,53 +450,6 @@ class TrainableSAM2(SAM2ImagePredictor):
                 score_loss = torch.abs(selected_scores - iou).mean()
 
 
-        #         for i in range(len(pred_masks)): # taking most probable mask and iou
-        #             most_probable_mask_idx = scores[i].argmax()
-
-        #             selected_score = scores[i][most_probable_mask_idx]
-        #             selected_mask = pred_masks[i][most_probable_mask_idx]
-
-        #             truth_mask = mask[i].float()
-        #             seg_loss = BCEWithLogitsLoss(selected_mask.float(), truth_mask)
-        #             batch_segmentation_loss.append(seg_loss)
-
-        #             sig_mask = torch.sigmoid(selected_mask)
-        #             inter = (truth_mask * (sig_mask > 0.5)).sum(1).sum(1)
-        #             iou = inter / (truth_mask.sum(1).sum(1) + (sig_mask > 0.5).sum(1).sum(1) - inter)
-        #             score_loss = torch.abs(selected_score - iou).mean()
-
-        #             batch_score_loss.append(score_loss)
-
-        #             selected_mask = np.array(selected_mask, dtype = np.uint8)
-        #             mask_i = np.array(mask[i], dtype = np.uint8)
-
-        #             y_pred = selected_mask.flatten()
-        #             y_true = mask_i.flatten()
-                    
-        #             scores['dice'].append(f1_score(y_true, y_pred))
-        #             scores['iou'].append(jaccard_score(y_true, y_pred))
-        #             scores['precision'].append(precision_score(y_true, y_pred, zero_division = 1))
-        #             scores['recall'].append(recall_score(y_true, y_pred, zero_division = 1))
-
-        #             if input_mask_eval:
-        #                 input_mask = resize(data[i]['mask_inputs'].cpu().numpy()[0][0], (IMG_RESOLUTION, IMG_RESOLUTION), interpolation = INTER_NEAREST)
-        #                 y_input = input_mask.flatten()
-
-        #                 scores['dice_input'].append(f1_score(y_true, y_input)) 
-        #                 scores['iou_input'].append(jaccard_score(y_true, y_input))
-        #                 scores['precision_input'].append(precision_score(y_true, y_input, zero_division = 1))
-        #                 scores['recall_input'].append(recall_score(y_true, y_input, zero_division = 1))
-
-        #         mean_segmentation_loss = torch.mean(torch.stack(batch_segmentation_loss))
-        #         mean_score_loss = torch.mean(torch.stack(batch_score_loss))
-        #         total_loss = mean_segmentation_loss + 0.05 * mean_score_loss
-
-        #         scores['Total Loss'].append(total_loss.item())
-        #         scores['BCE Loss'].append(mean_segmentation_loss.item())
-        #         scores['Score Loss'].append(mean_score_loss.item())
-        #         scores['prediction_time'].append(end_time - start_time)
-
-        # return scores
 
     def test_loop(self, dataloader : DataLoader, input_mask_eval : bool) -> dict:
         print("### Starting testing with SAM2 ! ###")
@@ -501,7 +463,7 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         with torch.no_grad():
             for data, mask in tqdm(dataloader):
-                mask = mask.to(device = self.device, dtype = torch.float32)
+                mask = mask.to(device = self.running_device, dtype = torch.float32)
     
                 prompts_record = self.convert_batch_prompts_from_sam_to_sam2_format(data)
                 sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
@@ -518,7 +480,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                 else:
                     self.set_image_batch(sam2_image_batch)
 
-                pred_masks, scores, _ = self.predict_batch(
+                pred_masks, pred_scores, _ = self.predict_batch(
                     point_coords_batch = prompts_record.get("point_coords", None),
                     point_labels_batch = prompts_record.get("point_labels", None),
                     box_batch =  prompts_record.get("boxes", None),
@@ -563,7 +525,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                 scores['recall'].extend(recall.cpu().numpy())
 
                 if input_mask_eval:
-                    input_masks = torch.stack([torch.from_numpy(d['mask_inputs']).to(self.device).squeeze(0) for d in data])  # Shape: (N, H, W)
+                    input_masks = torch.stack([torch.from_numpy(d['mask_inputs']).to(self.running_device).squeeze(0) for d in data])  # Shape: (N, H, W)
                     input_masks = input_masks.unsqueeze(1)  # Shape: (N, 1, H, W)
 
                     resized_masks = F.interpolate(input_masks, size = (IMG_RESOLUTION, IMG_RESOLUTION), mode = 'nearest-exact')

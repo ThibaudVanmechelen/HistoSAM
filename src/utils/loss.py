@@ -12,7 +12,7 @@ def focal_loss(preds, gt, alpha = 0.25, gamma = 2.0):
     return loss.mean()
 
 class SAM_Loss(nn.Module):
-    def __init__(self, focal_weight = 20.0, dice_weight = 1.0, iou_weight = 1.0, alpha = 0.25, gamma = 2.0):
+    def __init__(self, focal_weight = 20.0, dice_weight = 1.0, iou_weight = 1.0, alpha = 0.25, gamma = 2.0, is_sam2_loss = False):
         super(SAM_Loss, self).__init__()
 
         self.focal_weight = focal_weight
@@ -20,9 +20,10 @@ class SAM_Loss(nn.Module):
         self.iou_weight = iou_weight
         self.alpha = alpha
         self.gamma = gamma
+        self.is_sam2_loss = is_sam2_loss
 
-    def forward(self, best_pred, gt_masks, pred_iou):
-        y_true_flat = gt_masks.view(gt_masks.size(0), -1)
+    def forward(self, best_pred, gt_mask, pred_iou):
+        y_true_flat = gt_mask.view(gt_mask.size(0), -1)
         y_pred_flat = best_pred.view(best_pred.size(0), -1)
 
         y_true_sum = y_true_flat.sum(dim = 1)
@@ -34,9 +35,13 @@ class SAM_Loss(nn.Module):
         dice_score = (2 * intersection) / (y_true_sum + y_pred_sum + 1e-6)
         iou_score = intersection / (union + 1e-6)
 
-        focal = focal_loss(best_pred, gt_masks, self.alpha, self.gamma)
+        focal = focal_loss(best_pred, gt_mask, self.alpha, self.gamma)
         dice = 1 - dice_score.mean()
-        iou = F.mse_loss(pred_iou.squeeze(), iou_score) 
+
+        if self.is_sam2_loss:
+            iou = F.l1_loss(pred_iou.squeeze(), iou_score)
+        else:
+            iou = F.mse_loss(pred_iou.squeeze(), iou_score) 
 
         total_loss = self.focal_weight * focal + self.dice_weight * dice + self.iou_weight * iou
 
