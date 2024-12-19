@@ -566,46 +566,50 @@ class SamDatasetFromFiles(AbstractSAMDataset):
 
     def _load_data(self):
         """Load images and masks. Allows to filter files."""
-        prompts_to_delete = []
-        for i, f in enumerate(os.listdir(self.root + 'processed/')):
+        nb_imgs = 0
+        nb_filtered_out = 0
+
+        for _, f in enumerate(os.listdir(self.root + 'processed/')):
+            nb_imgs += 1
             if self.filter_files is not None:
                 if not self.filter_files(f):
-                    prompts_to_delete.append(i)
+                    nb_filtered_out += 1
                     continue
 
-            for g in os.listdir(self.root + 'processed/' + f):
+            current_path = self.root + 'processed/' + f
+            for g in os.listdir(current_path):
                 if g.endswith('.jpg'):
                     if 'mask' in g:
                         self.masks.append(self.root + 'processed/' + f + '/' + g)
                     else:
                         self.images.append(self.root + 'processed/' + f + '/' + g)
 
-                if g == 'img_embedding.pt' and not self.is_sam2_prompt:
-                    self.img_embeddings.append()
+                if self.use_img_embeddings:
+                    if (g == 'img_embedding.pt' and not self.is_sam2_prompt) or (g == 'sam2_img_embedding.pt' and self.is_sam2_prompt):
+                        path_ = os.path.join(current_path, g)
+                        self.img_embeddings.append(torch.load(path_))
 
-                if g == 'sam2_img_embedding.pt' and self.is_sam2_prompt:
+                if g == 'prompt.pt':
+                    path_ = os.path.join(current_path, g)
+                    temp_prompt = torch.load(path_)
 
-                if g == 'prompt.pt': # TODO check what happens if delete prompt but not image ???
+                    self.prompts['points'].append(temp_prompt['points'])
+                    self.prompts['neg_points'].append(temp_prompt['neg_points'])
+                    self.prompts['box'].append(temp_prompt['box'])
+                    self.prompts['mask'].append(temp_prompt['mask'])
 
-        for key in self.prompts:
-            self.prompts[key] = np.delete(self.prompts[key], prompts_to_delete, axis = 0) # remove the entries at the indices specified in prompts_to_delete
+        if self.verbose:
+            print(f'Initial number of images: {nb_imgs}')
+            print(f'Number of filtered out: {nb_filtered_out}')
 
+            print(f'Number of images in dataset: {len(self.images)}')
+            print(f'Number of masks in dataset: {len(self.masks)}')
 
-        if self.use_img_embeddings: #TODO
-            self._load_img_embeddings()
-    
-    def _load_img_embeddings(self):
-        """Load image embeddings"""
-        self.img_embeddings = []
-        
-        for i, f in enumerate(os.listdir(self.img_emb_path)):
-            if self.filter_files is not None: 
-                if not self.filter_files(f):
-                    continue
+            print(f'Number of point prompts: {len(self.prompts['points'])}')
+            print(f'Number of neg point prompts: {len(self.prompts['neg_points'])}')
+            print(f'Number of box prompts: {len(self.prompts['box'])}')
+            print(f'Number of mask prompts: {len(self.prompts['mask'])}')
 
-            path_ = os.path.join(self.img_emb_path, f)
-            self.img_embeddings.append(torch.load(path_).to('cpu')) # TODO see if enough space on the GPU to directly put the embeddings there
-        
     def __getitem__(self, idx : int) -> tuple:
         img_idx = idx % len(self.images)
         prompt_idx = idx // len(self.images)
