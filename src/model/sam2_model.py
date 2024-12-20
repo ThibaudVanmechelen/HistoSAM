@@ -430,26 +430,74 @@ class TrainableSAM2(SAM2ImagePredictor):
 
                 most_probable_mask_idx = pred_scores.argmax(dim = 1)  # Shape: (N)
                 selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx, :, :]  # Shape: (N, H, W), extracting the masks
-                # take iou and make (N, 1) tensor
+                selected_scores = pred_scores[torch.arange(pred_scores.size(0)), most_probable_mask_idx].unsqueeze(1) # Shape: (N, 1) TODO check this dimension
 
+                loss, loss_parts = loss_fn(selected_masks.float(), mask.float(), selected_scores.float())
+                if is_original_loss:
+                    scores['focal_loss'].append(loss_parts['focal'])
+                    scores['dice_loss'].append(loss_parts['dice'])
+                    scores['iou_loss'].append(loss_parts['iou'])
 
+                else:
+                    scores['seg_loss'].append(loss_parts['seg'])
+                    scores['score_loss'].append(loss_parts['score'])
 
+                scores['total_loss'].append(loss.item())
+                scores['prediction_time'].append(end_time - start_time)
 
+                selected_masks = torch.where(selected_masks > self.mask_threshold, 1, 0).float() # to obtain binary mask for the metrics
 
+                y_true_flat = mask.view(mask.size(0), -1)  # Shape: (N, H * W)
+                y_pred_flat = selected_masks.view(selected_masks.size(0), -1)  # Shape: same
 
-                seg_loss = BCEWithLogitsLoss(selected_masks, mask.float())
+                y_true_sum = y_true_flat.sum(dim = 1)
+                y_pred_sum = y_pred_flat.sum(dim = 1)
 
-                sig_masks = torch.sigmoid(selected_masks)
-                binary_masks = (sig_masks > 0.5).float() # TODO check if value is indeed 0.5, github says 0.0
+                intersection = (y_true_flat * y_pred_flat).sum(dim = 1)
+                union = y_true_sum + y_pred_sum - intersection
 
-                intersection = (mask * binary_masks).sum(dim = (1, 2))  # Shape: (N,)
-                union = mask.sum(dim = (1, 2)) + binary_masks.sum(dim = (1, 2)) - intersection  # Shape: (N,)
-                iou = intersection / (union + 1e-6)  # Avoid division by zero
+                dice_score = (2 * intersection) / (y_true_sum + y_pred_sum)
+                iou_score = intersection / union
+                precision = intersection / y_pred_sum
+                recall = intersection / y_true_sum
 
-                # Compute score loss
-                score_loss = torch.abs(selected_scores - iou).mean()
+                dice_score = torch.nan_to_num(dice_score, nan = 0.0)
+                iou_score = torch.nan_to_num(iou_score, nan = 0.0)
+                precision = torch.nan_to_num(precision, nan = 0.0)
+                recall = torch.nan_to_num(recall, nan = 0.0)
 
+                scores['dice'].extend(dice_score.cpu().numpy())
+                scores['iou'].extend(iou_score.cpu().numpy())
+                scores['precision'].extend(precision.cpu().numpy())
+                scores['recall'].extend(recall.cpu().numpy())
 
+                if input_mask_eval:
+                    input_masks = torch.stack([torch.from_numpy(d['mask_inputs']).to(self.running_device).squeeze(0) for d in data])  # Shape: (N, H, W)
+                    input_masks = input_masks.unsqueeze(1)  # Shape: (N, 1, H, W)
+
+                    resized_masks = F.interpolate(input_masks, size = (IMG_RESOLUTION, IMG_RESOLUTION), mode = 'nearest-exact')
+                    resized_masks_flat = resized_masks.view(resized_masks.size(0), -1)
+
+                    y_input_sum = resized_masks_flat.sum(dim = 1)
+                    intersection_input = (y_true_flat * resized_masks_flat).sum(dim = 1)
+                    union_input = y_true_sum + y_input_sum - intersection_input
+
+                    dice_input = (2 * intersection_input) / (y_true_sum + y_input_sum)
+                    iou_input = intersection_input / union_input
+                    precision_input = intersection_input / y_input_sum
+                    recall_input = intersection_input / y_true_sum
+
+                    dice_input = torch.nan_to_num(dice_input, nan = 0.0)
+                    iou_input = torch.nan_to_num(iou_input, nan = 0.0)
+                    precision_input = torch.nan_to_num(precision_input, nan = 0.0)
+                    recall_input = torch.nan_to_num(recall_input, nan = 0.0)
+
+                    scores['dice_input'].extend(dice_input.cpu().numpy())
+                    scores['iou_input'].extend(iou_input.cpu().numpy())
+                    scores['precision_input'].extend(precision_input.cpu().numpy())
+                    scores['recall_input'].extend(recall_input.cpu().numpy())
+
+        return scores
 
     def test_loop(self, dataloader : DataLoader, input_mask_eval : bool) -> dict:
         print("### Starting testing with SAM2 ! ###")

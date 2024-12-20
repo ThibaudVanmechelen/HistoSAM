@@ -46,3 +46,27 @@ class SAM_Loss(nn.Module):
         total_loss = self.focal_weight * focal + self.dice_weight * dice + self.iou_weight * iou
 
         return total_loss, {'focal' : focal.item(), 'dice' : dice.item(), 'iou' : iou.item()}
+    
+class Custom_SAM2_Loss(nn.module):
+    def __init__(self, score_weight = 0.05):
+        self.score_weight = score_weight
+    
+    def forward(self, best_pred, gt_mask, pred_iou, threshold):
+        seg_loss = nn.BCEWithLogitsLoss(best_pred, gt_mask).mean()
+        binary_pred = torch.where(best_pred > threshold, 1, 0).float()
+
+        y_true_flat = gt_mask.view(gt_mask.size(0), -1)
+        y_pred_flat = binary_pred.view(binary_pred.size(0), -1)
+
+        y_true_sum = y_true_flat.sum(dim = 1)
+        y_pred_sum = y_pred_flat.sum(dim = 1)
+
+        intersection = (y_true_flat * y_pred_flat).sum(dim = 1)
+        union = y_true_sum + y_pred_sum - intersection
+
+        iou = intersection / (union + 1e-6)
+        score_loss = torch.abs(pred_iou - iou).mean()
+
+        total_loss = seg_loss + self.score_weight * score_loss
+
+        return total_loss, {'seg' : seg_loss.item(), 'score' :score_loss.item()}
