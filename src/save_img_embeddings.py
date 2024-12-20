@@ -1,6 +1,7 @@
 """Save img embeddings in file for further use. Allows to train SAM model without touching its image encoder"""
 import os
 
+import gc
 import torch
 from dataset_processing.dataset import SAMDataset
 from model.model import load_model
@@ -53,3 +54,30 @@ def save_embeddings(config : dict, dataset_path : str, checkpoint_path : str, is
             if save_prompt:
                 prompt_save_path = os.path.join(img_dir, 'prompt.pt')
                 torch.save(prompt, prompt_save_path)
+
+    del model
+    del dataset
+    torch.cuda.empty_cache()
+    gc.collect()
+
+def remove_pt_files(dataset_path):
+    pt_files = {"prompt.pt", "img_embedding.pt", "sam2_img_embedding.pt"}
+
+    listdir_ = os.listdir(dataset_path)
+    print(f"Number of files: {len(listdir_)}")
+
+    for subdir in listdir_:
+        if os.path.isdir(os.path.join(dataset_path, subdir)):
+            path = os.path.join(dataset_path, subdir)
+
+            for file in os.listdir(path):
+                if file in pt_files:
+                    file_path = os.path.join(path, file)
+
+                    try:
+                        os.remove(file_path)
+
+                    except Exception as e:
+                        print(f"Error removing file {file_path}: {e}")
+
+    print("Done with removal !")
