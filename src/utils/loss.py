@@ -47,13 +47,20 @@ class SAM_Loss(nn.Module):
 
         return total_loss, {'focal' : focal.item(), 'dice' : dice.item(), 'iou' : iou.item()}
     
-class Custom_SAM2_Loss(nn.module):
+class Custom_SAM2_Loss(nn.Module):
     def __init__(self, score_weight = 0.05):
+        super(Custom_SAM2_Loss, self).__init__()
         self.score_weight = score_weight
+        self.bce_loss = nn.BCEWithLogitsLoss()
     
     def forward(self, best_pred, gt_mask, pred_iou, threshold):
-        seg_loss = nn.BCEWithLogitsLoss(best_pred, gt_mask).mean()
-        binary_pred = torch.where(best_pred > threshold, 1, 0).float()
+        if best_pred.ndim == 2:  # single item, no batch dimension
+            best_pred = best_pred.unsqueeze(0)
+            gt_mask = gt_mask.unsqueeze(0)
+            pred_iou = pred_iou.unsqueeze(0)
+
+        seg_loss = self.bce_loss(best_pred, gt_mask).mean()
+        binary_pred = torch.where(best_pred > threshold, 1.0, 0.0).float()
 
         y_true_flat = gt_mask.view(gt_mask.size(0), -1)
         y_pred_flat = binary_pred.view(binary_pred.size(0), -1)

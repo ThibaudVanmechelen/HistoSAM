@@ -226,6 +226,16 @@ def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epo
                                "eval_precision": scores_eval["precision"], 
                                "eval_recall": scores_eval["recall"], 
                                "eval_time": scores_eval["prediction_time"]})
+                    
+                scores['validation_total_loss'].append(scores_eval["total_loss"])
+                scores['validation_focal_loss'].append(scores_eval["focal_loss"])
+                scores['validation_dice_loss'].append(scores_eval["dice_loss"])
+                scores['validation_iou_loss'].append(scores_eval["iou_loss"])
+                scores['validation_dice'].append(scores_eval["dice"])
+                scores['validation_iou'].append(scores_eval["iou"])
+                scores['validation_precision'].append(scores_eval["precision"])
+                scores['validation_recall'].append(scores_eval["recall"])
+                scores['validation_prediction_time'].append(scores_eval["prediction_time"])
 
             else:
                 print(f'''Evaluation - Total Loss: {scores_eval["total_loss"]}, 
@@ -242,6 +252,13 @@ def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epo
                                "eval_precision": scores_eval["precision"], 
                                "eval_recall": scores_eval["recall"], 
                                "eval_time": scores_eval["prediction_time"]})
+                    
+                scores['validation_total_loss'].append(scores_eval["total_loss"])
+                scores['validation_dice'].append(scores_eval["dice"])
+                scores['validation_iou'].append(scores_eval["iou"])
+                scores['validation_precision'].append(scores_eval["precision"])
+                scores['validation_recall'].append(scores_eval["recall"])
+                scores['validation_prediction_time'].append(scores_eval["prediction_time"])
 
             if best_loss > scores_eval["total_loss"]:
                 best_loss = scores_eval["total_loss"]

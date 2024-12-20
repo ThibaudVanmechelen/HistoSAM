@@ -55,10 +55,13 @@ class TrainableSAM2(SAM2ImagePredictor):
         if do_train_mask_decoder:
             self.model.sam_mask_decoder.train(True)
 
-    def setup_training_parameters(self, lr : float, weight_decay : float, step_size : int, gamma : float):
+    def setup_training_parameters(self, lr : float, weight_decay : float, step_size : int, gamma : float, batch_size : int):
         self.optimizer = AdamW(params = self.model.parameters(), lr = lr, weight_decay = weight_decay)
-        self.scheduler = StepLR(self.optimizer, step_size = step_size, gamma = gamma)
+        self.scheduler = StepLR(self.optimizer, step_size = step_size // batch_size, gamma = gamma)
         self.scaler = GradScaler()
+
+        print(f'Optimizer parameters: lr = {lr}, weight_decay = {weight_decay}')
+        print(f'Scheduler parameters: step_size = {step_size // batch_size}, gamma = {gamma}')
 
     def move_to_gpu(self, data : list[dict], device : str = 'cuda') -> list[dict]:
         """Move data to a device."""
@@ -192,11 +195,14 @@ class TrainableSAM2(SAM2ImagePredictor):
             loss_fn = Custom_SAM2_Loss()
 
         self.setup_training_parameters(lr = config.training.lr, weight_decay = config.training.weight_decay, 
-                                       step_size = config.training.step_size, gamma = config.training.gamma)
+                                       step_size = config.training.step_size, gamma = config.training.gamma, 
+                                       batch_size = config.training.batch_size)
 
         if config.training.train_from_last_checkpoint:
             checkpoint = torch.load(config.training.last_checkpoint_path)
-            optimizer.load_state_dict(checkpoint['optimizer']) # TODO
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.scaler.load_state_dict(checkpoint['scaler'])
+            self.scheduler.load_state_dict(checkpoint['scheduler'])
 
             return self.train_loop(trainloader, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
                                             use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], 
@@ -220,11 +226,11 @@ class TrainableSAM2(SAM2ImagePredictor):
         start_epoch = last_epoch + 1 if last_epoch >= 0 else 0
         for epoch in range(start_epoch, epochs):
             total_losses = []
-            iou_losses = []
 
             if is_original_loss:
                 focal_losses = []
                 dice_losses = []
+                iou_losses = []
 
             else:
                 segmentation_losses = []
@@ -235,7 +241,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                 mask = mask.to(self.running_device)
 
                 with autocast(): # modifying floating point precision to speed up the training
-                    if self.img_embeddings_as_input: # TODO
+                    if self.img_embeddings_as_input:
                         self.reset_predictor()
                         
                         self._is_image_set = True
@@ -247,9 +253,8 @@ class TrainableSAM2(SAM2ImagePredictor):
                         sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
                         self.set_image_batch(sam2_image_batch) # this function does not compute grad for the img encoder
 
-                    batch_segmentation_loss = []
-                    batch_score_loss = []
-                    batch_ious = []
+                    batch_best_pred = []
+                    batch_best_ious = []
 
                     num_images = len(self._features['image_embed'])
                     for img_idx in range(num_images):
@@ -298,42 +303,73 @@ class TrainableSAM2(SAM2ImagePredictor):
                             high_res_features = high_res_features,
                         )
 
-                        prediction_masks = self._transforms.postprocess_masks(low_res_masks, self._orig_hw[img_idx])
+                        prediction_masks = self._transforms.postprocess_masks(low_res_masks, self._orig_hw[img_idx]) # Shape: (B, C, H, W), here B is just 1 TODO check this dim
+                        prediction_masks = prediction_masks.squeeze(0) # Shape: (C, H, W)
+                        iou_predictions = iou_predictions.squeeze(0) # Shape: C
 
-                        truth_mask = mask[img_idx].float()
-                        segmentation_loss = BCEWithLogitsLoss(prediction_masks[:, 0], truth_mask)
+                        most_probable_mask_idx = iou_predictions.argmax()
+                        prediction_masks = prediction_masks[most_probable_mask_idx, :, :]
+                        prediction_iou = iou_predictions[most_probable_mask_idx]
 
-                        pred_mask = torch.sigmoid(prediction_masks[:, 0]) # converting logits to probabilities for the first mask (the most probable)
-                        inter = (truth_mask * (pred_mask > 0.5)).sum(1).sum(1)
-                        iou = inter / (truth_mask.sum(1).sum(1) + (pred_mask > 0.5).sum(1).sum(1) - inter)
-                        score_loss = torch.abs(iou_predictions[:, 0] - iou).mean()
+                        batch_best_pred.append(prediction_masks)
+                        batch_best_ious.append(prediction_iou)
 
-                        batch_segmentation_loss.append(segmentation_loss)
-                        batch_score_loss.append(score_loss)
-                        batch_ious.append(iou.mean().item())
+                    pred_masks = torch.stack(batch_best_pred) # Shape: (N, H, W)
+                    pred_ious = torch.stack(batch_best_ious) # Shape: (N, 1) TODO check this 2 dims
 
+                    if is_original_loss:
+                        loss, loss_parts = loss_fn(pred_masks.float(), mask.float(), pred_ious.float())
 
-                    mean_segmentation_loss = torch.mean(torch.stack(batch_segmentation_loss))
-                    mean_score_loss = torch.mean(torch.stack(batch_score_loss))
-                    mean_iou = np.mean(batch_ious) # because does not need to be in the computation graph
+                        focal_losses.append(loss_parts['focal'])
+                        dice_losses.append(loss_parts['dice'])
+                        iou_losses.append(loss_parts['iou'])
 
-                    loss = mean_segmentation_loss + 0.05 * mean_score_loss
+                    else:
+                        loss, loss_parts = loss_fn(pred_masks.float(), mask.float(), pred_ious.float(), self.mask_threshold)
+
+                        segmentation_losses.append(loss_parts['seg'])
+                        score_losses.append(loss_parts['score'])
+
+                    total_losses.append(loss.item())
+
                     self.scaler.scale(loss).backward()
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm = 1.0)
 
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
 
-                    self.model.zero_grad() # or self.optimizer.zero_grad() ? 
+                    self.model.zero_grad()
                     self.scheduler.step()
 
-                    epoch_losses.append(loss.item())
-                    epoch_segmentation_losses.append(mean_segmentation_loss.item())
-                    epoch_score_losses.append(mean_score_loss.item())
-                    epoch_mean_ious.append(mean_iou)
+            mean_total_loss = sum(total_losses) / len(total_losses)
+            scores['training_total_loss'].append(mean_total_loss)
 
+            if is_original_loss:
+                mean_focal_loss = sum(focal_losses) / len(focal_losses)
+                mean_dice_loss = sum(dice_losses) / len(dice_losses)
+                mean_iou_loss = sum(iou_losses) / len(iou_losses)
+
+                scores['training_focal_loss'].append(mean_focal_loss)
+                scores['training_dice_loss'].append(mean_dice_loss)
+                scores['training_iou_loss'].append(mean_iou_loss)
+            else:
+                mean_seg_loss = sum(segmentation_losses) / len(segmentation_losses)
+                mean_score_loss = sum(score_losses) / len(score_losses)
+
+                scores['training_seg_loss'].append(mean_seg_loss)
+                scores['training_score_loss'].append(mean_score_loss)
+            
             if verbose:
-                print(f'Total Loss: {sum(epoch_losses)/len(epoch_losses)}, BCE Loss: {sum(epoch_segmentation_losses)/len(epoch_segmentation_losses)}, Score Loss: {sum(epoch_score_losses)/len(epoch_score_losses)}, IoU: {sum(epoch_mean_ious)/len(epoch_mean_ious)}')
+                if is_original_loss:
+                    print(f'Training - Mean Total Loss: {mean_total_loss}, Focal Loss: {mean_focal_loss}, Dice Loss: {mean_dice_loss}, IoU: {mean_iou_loss}')
+                else:
+                    print(f'Training - Mean Total Loss: {mean_total_loss}, Segmentation Loss: {mean_seg_loss}, Score Loss: {mean_score_loss}')
+
+            if use_wandb:
+                if is_original_loss:
+                    wandb.log({'total_loss': mean_total_loss, 'focal_loss': mean_focal_loss, 'dice_loss': mean_dice_loss, 'iou_loss': mean_iou_loss})
+                else:
+                    wandb.log({'total_loss': mean_total_loss, 'seg_loss': mean_seg_loss, 'score_loss': mean_score_loss})
 
             if model_save_dir is not None:
                 name_model = self.finetuned_model_name + '_last_model.pt'
@@ -344,39 +380,83 @@ class TrainableSAM2(SAM2ImagePredictor):
                 name_checkpoint = self.finetuned_model_name + '_last_checkpoint.pt'
                 name_checkpoint = os.path.join(model_save_dir, name_checkpoint)
             
-                torch.save({'epoch': epoch, 'optimizer': self.optimizer.state_dict()}, name_checkpoint)
+                torch.save({
+                    'epoch': epoch, 
+                    'optimizer': self.optimizer.state_dict(),
+                    'scheduler': self.scheduler.state_dict(),
+                    'scaler': self.scaler.state_dict()
+                }, name_checkpoint)
 
-            if evalloader is not None:
-                scores = self.eval_loop(evalloader, input_mask_eval, return_mean = True)
-                print(f'Evaluation - Total Loss: {scores["total_loss"]}, BCE Loss: {scores["BCE"]}, Score Loss: {scores["score_loss"]}, Dice: {scores["dice"]}, IoU: {scores["iou"]}, Precision: {scores["precision"]}, Recall: {scores["recall"]}, Time: {scores["prediction_time"]}')
+            if evalloader is not None and epoch % eval_frequency == 0:
+                scores_eval = self.eval_loop(evalloader, input_mask_eval = False, is_original_loss = is_original_loss)
+                scores_eval = { key: sum(value) / len(value) if value else 0 for key, value in scores_eval.items() }
 
-                if use_wandb:
-                    wandb.log({
-                        "Total Loss": scores["total_loss"],
-                        "BCE Loss": scores["BCE"], 
-                        "Score Loss": scores["score_loss"],
-                        "Dice": scores["dice"], 
-                        "Iou": scores["iou"], 
-                        "Precision": scores["precision"], 
-                        "Recall": scores["recall"], 
-                        "Time": scores['prediction_time']
-                        })
-                
-                if best_loss > scores['total_loss']:
-                    best_loss = scores['total_loss']
+                if is_original_loss:
+                    print(f'''Evaluation - Total Loss: {scores_eval["total_loss"]}, 
+                                            Focal Loss: {scores_eval["focal_loss"]},
+                                            Dice Loss: {scores_eval["dice_loss"]},
+                                            IoU Loss: {scores_eval["iou_loss"]},
+                                            Dice: {scores_eval["dice"]}, 
+                                            IoU: {scores_eval["iou"]}, 
+                                            Precision: {scores_eval["precision"]}, 
+                                            Recall: {scores_eval["recall"]}, 
+                                            Time: {scores_eval["prediction_time"]}''')
 
-                    name_best = self.finetuned_model_name + '_best_model.pt'
-                    name_best = os.path.join(model_save_dir, name_best)
+                    if use_wandb:
+                        wandb.log({ "eval_total_loss": scores_eval["total_loss"],
+                                    "eval_focal_loss": scores_eval["focal_loss"],
+                                    "eval_dice_loss": scores_eval["dice_loss"],
+                                    "eval_iou_loss": scores_eval["iou_loss"],
+                                    "eval_dice": scores_eval["dice"],
+                                    "eval_iou": scores_eval["iou"],
+                                    "eval_precision": scores_eval["precision"], 
+                                    "eval_recall": scores_eval["recall"], 
+                                    "eval_time": scores_eval["prediction_time"]})
+                        
+                    scores['validation_total_loss'].append(scores_eval["total_loss"])
+                    scores['validation_focal_loss'].append(scores_eval["focal_loss"])
+                    scores['validation_dice_loss'].append(scores_eval["dice_loss"])
+                    scores['validation_iou_loss'].append(scores_eval["iou_loss"])
+                    scores['validation_dice'].append(scores_eval["dice"])
+                    scores['validation_iou'].append(scores_eval["iou"])
+                    scores['validation_precision'].append(scores_eval["precision"])
+                    scores['validation_recall'].append(scores_eval["recall"])
+                    scores['validation_prediction_time'].append(scores_eval["prediction_time"])
 
-                    torch.save(self.model.state_dict(), name_best)
+                else:
+                    print(f'''Evaluation - Total Loss: {scores_eval["total_loss"]},
+                                            Seg Loss: {scores_eval["seg_loss"]},
+                                            Score Loss: {scores_eval["score_loss"]},
+                                            Dice: {scores_eval["dice"]}, 
+                                            IoU: {scores_eval["iou"]}, 
+                                            Precision: {scores_eval["precision"]}, 
+                                            Recall: {scores_eval["recall"]}, 
+                                            Time: {scores_eval["prediction_time"]}''')
 
-            elif use_wandb:
-                wandb.log({
-                    "Total Loss": sum(epoch_losses)/len(epoch_losses),
-                    "BCE Loss": sum(epoch_segmentation_losses)/len(epoch_segmentation_losses),
-                    "Score Loss": sum(epoch_score_losses)/len(epoch_score_losses), 
-                    "IoU": sum(epoch_mean_ious)/len(epoch_mean_ious)
-                    })
+                    if use_wandb:
+                        wandb.log({ "eval_total_loss": scores_eval["total_loss"],
+                                    "eval_seg_loss": scores_eval["seg_loss"],
+                                    "eval_score_loss": scores_eval["score_loss"],
+                                    "eval_dice": scores_eval["dice"],
+                                    "eval_iou": scores_eval["iou"],
+                                    "eval_precision": scores_eval["precision"], 
+                                    "eval_recall": scores_eval["recall"], 
+                                    "eval_time": scores_eval["prediction_time"]})
+                        
+                    scores['validation_total_loss'].append(scores_eval["total_loss"])
+                    scores['validation_seg_loss'].append(scores_eval["seg_loss"])
+                    scores['validation_score_loss'].append(scores_eval["score_loss"])
+                    scores['validation_dice'].append(scores_eval["dice"])
+                    scores['validation_iou'].append(scores_eval["iou"])
+                    scores['validation_precision'].append(scores_eval["precision"])
+                    scores['validation_recall'].append(scores_eval["recall"])
+                    scores['validation_prediction_time'].append(scores_eval["prediction_time"])
+
+                if best_loss > scores_eval["total_loss"]:
+                    best_loss = scores_eval["total_loss"]
+                    best_model_save_path = os.path.join(model_save_dir, 'best_model.pt')
+                    
+                    torch.save(self.model.state_dict(), best_model_save_path)
                 
         return scores
     
@@ -432,13 +512,16 @@ class TrainableSAM2(SAM2ImagePredictor):
                 selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx, :, :]  # Shape: (N, H, W), extracting the masks
                 selected_scores = pred_scores[torch.arange(pred_scores.size(0)), most_probable_mask_idx].unsqueeze(1) # Shape: (N, 1) TODO check this dimension
 
-                loss, loss_parts = loss_fn(selected_masks.float(), mask.float(), selected_scores.float())
                 if is_original_loss:
+                    loss, loss_parts = loss_fn(selected_masks.float(), mask.float(), selected_scores.float())
+
                     scores['focal_loss'].append(loss_parts['focal'])
                     scores['dice_loss'].append(loss_parts['dice'])
                     scores['iou_loss'].append(loss_parts['iou'])
 
                 else:
+                    loss, loss_parts = loss_fn(selected_masks.float(), mask.float(), selected_scores.float(), self.mask_threshold)
+
                     scores['seg_loss'].append(loss_parts['seg'])
                     scores['score_loss'].append(loss_parts['score'])
 
