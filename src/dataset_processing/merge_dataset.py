@@ -243,10 +243,3 @@ def copy_file(file_path : str, new_file_path : str) -> None:
 
 #         os.makedirs(os.path.dirname(new_file_path), exist_ok = True)
 #         copy_file(file_path, new_file_path)
-
-
-if __name__ == '__main__':
-    root = '../../datasets/all/'
-    datasets = ['../../datasets/camelyon16.1/processed/', '../../datasets/LBTD-NEO04/processed/', '../../datasets/LBTD-AGDC10/processed/']
-    #datasets = ['../../datasets/void/processed/', '../../datasets/void/processed/', '../../datasets/LBTD-AGDC10/processed/']
-    merge_datasets(root, datasets)

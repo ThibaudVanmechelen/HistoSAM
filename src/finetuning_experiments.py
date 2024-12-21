@@ -2,15 +2,15 @@ import os
 import torch
 
 from torch.utils.data import DataLoader
-from train import train_with_config
+from .train import train_with_config
 from model.sam2_model import TrainableSAM2
 from model.model import load_model
 from dataset_processing.dataset import SamDatasetFromFiles
 from dataset_processing.preprocess import collate_fn
-from evaluate import test_loop
+from .evaluate import test_loop
 from utils.config import load_config
 from utils.save_scores import save_scores
-from save_img_embeddings import save_embeddings
+from .save_img_embeddings import save_embeddings
 
 def file_verification(dataset_path, is_post_processing):
     files_pre = {"mask.jpg", "img.jpg"}
@@ -31,9 +31,10 @@ def file_verification(dataset_path, is_post_processing):
 
             missing_files = required_files - files_in_subdir
 
-            if is_post_processing and missing_files:
-                all_ok = False
-                errors.append(f"Issue at path: {path}, Missing: {', '.join(missing_files)}")
+            if is_post_processing:
+                if missing_files:
+                    all_ok = False
+                    errors.append(f"Issue at path: {path}, Missing: {', '.join(missing_files)}")
 
             else:
                 bad_files_present = files_in_subdir & no_files_pre

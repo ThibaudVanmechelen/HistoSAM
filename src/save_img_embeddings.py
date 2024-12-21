@@ -33,7 +33,9 @@ def save_embeddings(config : dict, dataset_path : str, checkpoint_path : str, is
         is_embedding_saving = True
     )
     
-    model.eval()
+    if not is_sam2:
+        model.eval()
+    
     with torch.no_grad():
         for i, (data, _, prompt) in tqdm(enumerate(dataset), total = len(dataset), desc = 'Saving img embeddings'):
             if not is_sam2:

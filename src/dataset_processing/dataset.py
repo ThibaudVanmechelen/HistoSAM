@@ -605,10 +605,10 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             print(f'Number of images in dataset: {len(self.images)}')
             print(f'Number of masks in dataset: {len(self.masks)}')
 
-            print(f'Number of point prompts: {len(self.prompts['points'])}')
-            print(f'Number of neg point prompts: {len(self.prompts['neg_points'])}')
-            print(f'Number of box prompts: {len(self.prompts['box'])}')
-            print(f'Number of mask prompts: {len(self.prompts['mask'])}')
+            print(f'Number of point prompts: {len(self.prompts["points"])}')
+            print(f'Number of neg point prompts: {len(self.prompts["neg_points"])}')
+            print(f'Number of box prompts: {len(self.prompts["box"])}')
+            print(f'Number of mask prompts: {len(self.prompts["mask"])}')
 
     def __getitem__(self, idx : int) -> tuple:
         img_idx = idx % len(self.images)

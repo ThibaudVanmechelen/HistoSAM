@@ -1,5 +1,3 @@
-from typing import List
-
 import os
 import time
 import torch
@@ -7,18 +5,14 @@ import wandb
 import numpy as np
 
 from tqdm import tqdm
-from torch.nn import BCEWithLogitsLoss
 from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
-from cv2 import INTER_NEAREST, resize
-
 from dataset_processing.dataset import (
-    SamDatasetFromFiles,
-    filter_dataset,
+    SamDatasetFromFiles
 )
 from dataset_processing.preprocess import collate_fn
 

@@ -1,0 +1,20 @@
+title = "Configuration to produce the embeddings for a dataset"
+
+[dataset]
+n_points = 5
+n_neg_points = 5
+negative_points_inside_box = true
+points_near_center = 4
+random_box_shift = 20
+mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
+box_around_prompt_mask = false
+
+[sam]
+model_type = 'vit_b'
+input_size = 1024
+
+[sam2]
+model_type = 'sam2.1_hiera_b+.yaml'
+
+[misc]
+device = 'cuda'

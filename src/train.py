@@ -1,10 +1,5 @@
 """This script allows to train a SAM model on a dataset. The dataset should be in the format of the SAM dataset."""
-from argparse import ArgumentParser
-from typing import List
-
-import matplotlib.pyplot as plt
 import os
-import numpy as np
 import torch
 import wandb
 from dataset_processing.dataset import (
@@ -13,7 +8,7 @@ from dataset_processing.dataset import (
     filter_dataset,
 )
 from dataset_processing.preprocess import collate_fn
-from evaluate import eval_loop
+from .evaluate import eval_loop
 from model.model import load_model
 from segment_anything.modeling.sam import Sam
 from torch import nn
