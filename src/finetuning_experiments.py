@@ -1,4 +1,5 @@
 import os
+import torch
 
 from torch.utils.data import DataLoader
 from train import train_with_config
@@ -128,7 +129,8 @@ def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_pat
 
     if not is_sam2:
         print("Starting Testing for SAM...")
-        model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.sam.use_img_embeddings, return_iou = True) # TODO check if weights are loaded
+        model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.sam.use_img_embeddings, return_iou = True).to(config.misc.device)
+        model.load_state_dict(torch.load(config.sam.last_model_path))
         scores = test_loop(model, dataloader, config.misc.device, config.sam.input_mask_eval, return_mean = False)
 
     else:
