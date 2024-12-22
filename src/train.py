@@ -3,7 +3,6 @@ import os
 import torch
 import wandb
 from dataset_processing.dataset import (
-    AugmentedSamDataset,
     SamDatasetFromFiles,
     filter_dataset,
 )
@@ -18,7 +17,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from utils.loss import SAM_Loss
 
-def train_with_config(config: dict, checkpoint_path : str, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool) -> dict:
+def train_with_config(config: dict, checkpoint_path : str, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]) -> dict:
     model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.training.use_img_embeddings, return_iou = True).to(config.misc.device)
     print(f"Model parameters: {model.get_nb_parameters(img_encoder=True) / 1e6:.2f}M")
 
@@ -44,7 +43,7 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
         random_box_shift = config.training.random_box_shift,
         mask_prompt_type = config.training.mask_prompt_type,
         box_around_mask = config.training.box_around_prompt_mask,
-        filter_files = None,
+        filter_files = lambda x: filter_dataset(x, use_dataset),
         load_on_cpu = True
     )
 
@@ -54,7 +53,7 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
         valid_dataset = SamDatasetFromFiles(
             root = validation_dataset_path,
             transform = None,
-            use_img_embeddings = config.validation.use_img_embeddings,
+            use_img_embeddings = config.training.use_img_embeddings,
             prompt_type = prompt_type,
             n_points = config.training.n_points,
             n_neg_points = config.training.n_neg_points,
@@ -66,7 +65,7 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
             random_box_shift = config.training.random_box_shift,
             mask_prompt_type = config.training.mask_prompt_type,
             box_around_mask = config.training.box_around_prompt_mask,
-            filter_files = None,
+            filter_files = lambda x: filter_dataset(x, use_dataset),
             load_on_cpu = True
         )
 
@@ -185,9 +184,9 @@ def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epo
 
         if use_wandb:
             if is_original_loss:
-                wandb.log({'total_loss': mean_total_loss, 'focal_loss': mean_focal_loss, 'dice_loss': mean_dice_loss, 'iou_loss': mean_iou_loss})
+                wandb.log({'epoch': epoch, 'total_loss': mean_total_loss, 'focal_loss': mean_focal_loss, 'dice_loss': mean_dice_loss, 'iou_loss': mean_iou_loss})
             else:
-                wandb.log({'total_loss': mean_total_loss})
+                wandb.log({'epoch': epoch, 'total_loss': mean_total_loss})
 
         if model_save_dir is not None:
             model_save_path = os.path.join(model_save_dir, 'last_model.pt')
@@ -212,7 +211,8 @@ def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epo
                                         Time: {scores_eval["prediction_time"]}''')
 
                 if use_wandb:
-                    wandb.log({"eval_total_loss": scores_eval["total_loss"],
+                    wandb.log({"epoch": epoch,
+                               "eval_total_loss": scores_eval["total_loss"],
                                "eval_focal_loss": scores_eval["focal_loss"],
                                "eval_dice_loss": scores_eval["dice_loss"],
                                "eval_iou_loss": scores_eval["iou_loss"],
@@ -241,7 +241,8 @@ def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epo
                                         Time: {scores_eval["prediction_time"]}''')
 
                 if use_wandb:
-                    wandb.log({"eval_total_loss": scores_eval["total_loss"],
+                    wandb.log({"epoch": epoch,
+                               "eval_total_loss": scores_eval["total_loss"],
                                "eval_dice": scores_eval["dice"],
                                "eval_iou": scores_eval["iou"],
                                "eval_precision": scores_eval["precision"], 

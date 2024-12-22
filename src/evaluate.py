@@ -1,18 +1,14 @@
-from argparse import ArgumentParser
-from typing import List
-
 import time
 import gc
 import numpy as np
 import torch
-from dataset_processing.dataset import AugmentedSamDataset, SAMDataset, SamDatasetFromFiles, filter_dataset
+from dataset_processing.dataset import SAMDataset
 from dataset_processing.preprocess import collate_fn
 from model.model import load_model
 from torch import nn
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from tqdm import tqdm
-from utils.config import load_config
 from model.sam2_model import TrainableSAM2
 from segment_anything import SamAutomaticMaskGenerator
 from sam2.build_sam import build_sam2
@@ -103,30 +99,6 @@ def evaluate_without_prompts(dataset_path : str, checkpoint_path : str, is_sam2 
     del model
     torch.cuda.empty_cache()
     gc.collect()
-
-    return scores
-
-
-def evaluate_with_config(config : dict, use_dataset : List[bool] = [True, True, True]): #TODO check if fromFiles is the right class for testing vs augmented dataset ?
-    """Function to evaluate a model with a configuration dictionary. Please refers to load_config() function from .utils.config."""
-    prompt_type = {'points':config.dataset.points, 'box':config.dataset.box, 'neg_points':config.dataset.negative_points, 'mask':config.dataset.mask_prompt}
-    test_dataset = SamDatasetFromFiles(root=config.evaluate.valid_dataset_path,
-                            #prompt_type={'points':config.dataset.points, 'box':config.dataset.box, 'neg_points':config.dataset.negative_points, 'mask':config.dataset.mask_prompt},
-                            n_points=config.dataset.n_points,
-                            n_neg_points=config.dataset.n_neg_points,
-                            verbose=True,
-                            to_dict=True,
-                            use_img_embeddings=config.training.use_img_embeddings,
-                            random_box_shift=config.dataset.random_box_shift,
-                            mask_prompt_type=config.dataset.mask_prompt_type,
-                            #box_around_mask=config.dataset.box_around_prompt_mask,
-                            load_on_cpu=True,
-                            filter_files=lambda x: filter_dataset(x, use_dataset)
-    )
-    dataloader = DataLoader(test_dataset, batch_size=config.training.batch_size, shuffle=False, collate_fn=collate_fn)
-
-    model = load_model(config.sam.checkpoint_path, config.sam.model_type, img_embeddings_as_input=config.training.use_img_embeddings, return_iou=True)
-    scores = test_loop(model, dataloader, config.misc.device, config.evaluate.input_mask_eval, return_mean=False)
 
     return scores
 
@@ -337,31 +309,3 @@ def test_loop(model: torch.nn.Module, dataloader: DataLoader, device: str = 'cud
         model.return_iou = True
 
     return scores
-
-
-if __name__ == '__main__':
-    parser = ArgumentParser(description='Evaluate a batch of images using a trained model.')
-
-    parser.add_argument('--config', required=False, type=str, help='Path to the configuration file. Default: ../config.toml', default='../config.toml')
-    parser.add_argument('--save_metrics', required=False, type=bool, help='Save the metrics in a .pt file containing a dictionary {"dice", "iou", "precision", "recall"}. Each key is associated to the distribution of the results of evalution over the dataset. Default: False', default=False)
-    parser.add_argument('--metrics_path', required=False, type=str, help='Path to save the metrics. Default: metrics.pt', default='')
-
-    args = parser.parse_args()
-
-    config = load_config(args.config)
-    scores = evaluate_with_config(config)
-
-    dice_scores = scores['dice']
-    iou_scores = scores['iou']
-    precision_scores = scores['precision']
-    recall_scores = scores['recall']
-    prediction_times = scores['prediction_time']
-
-    print(f'Mean Dice score: {np.mean(dice_scores)}')
-    print(f'Mean IoU score: {np.mean(iou_scores)}')
-    print(f'Mean Precision score: {np.mean(precision_scores)}')
-    print(f'Mean Recall score: {np.mean(recall_scores)}')
-    print(f'Mean Prediction time: {np.mean(prediction_times)}')
-
-    if args.save_metrics:
-        torch.save(scores, args.metrics_path)

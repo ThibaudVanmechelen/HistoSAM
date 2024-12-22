@@ -12,7 +12,8 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 
 from dataset_processing.dataset import (
-    SamDatasetFromFiles
+    SamDatasetFromFiles,
+    filter_dataset
 )
 from dataset_processing.preprocess import collate_fn
 
@@ -71,7 +72,7 @@ class TrainableSAM2(SAM2ImagePredictor):
         image_embeds = []
         high_res_feats = []
 
-        for idx in len(data):
+        for idx in range(len(data)):
             self._orig_hw.append(data[idx]['original_size'])
 
             temp_embed = data[idx]['image']['image_embed']
@@ -125,7 +126,7 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return sam2_prompts
     
-    def train_model(self, config : dict, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool):
+    def train_model(self, config : dict, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]):
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()) / 1e6:.2f}M")
 
         prompt_type = {
@@ -150,7 +151,7 @@ class TrainableSAM2(SAM2ImagePredictor):
             random_box_shift = config.training.random_box_shift,
             mask_prompt_type = config.training.mask_prompt_type,
             box_around_mask = config.training.box_around_prompt_mask,
-            filter_files = None,
+            filter_files = lambda x: filter_dataset(x, use_dataset),
             load_on_cpu = True
         )
 
@@ -172,7 +173,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                 random_box_shift = config.training.random_box_shift,
                 mask_prompt_type = config.training.mask_prompt_type,
                 box_around_mask = config.training.box_around_prompt_mask,
-                filter_files = None,
+                filter_files = lambda x: filter_dataset(x, use_dataset),
                 load_on_cpu = True
             )
 
@@ -219,6 +220,9 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         start_epoch = last_epoch + 1 if last_epoch >= 0 else 0
         for epoch in range(start_epoch, epochs):
+            self.model.sam_prompt_encoder.train(True)
+            self.model.sam_mask_decoder.train(True)
+
             total_losses = []
 
             if is_original_loss:
@@ -361,9 +365,9 @@ class TrainableSAM2(SAM2ImagePredictor):
 
             if use_wandb:
                 if is_original_loss:
-                    wandb.log({'total_loss': mean_total_loss, 'focal_loss': mean_focal_loss, 'dice_loss': mean_dice_loss, 'iou_loss': mean_iou_loss})
+                    wandb.log({'epoch': epoch, 'total_loss': mean_total_loss, 'focal_loss': mean_focal_loss, 'dice_loss': mean_dice_loss, 'iou_loss': mean_iou_loss})
                 else:
-                    wandb.log({'total_loss': mean_total_loss, 'seg_loss': mean_seg_loss, 'score_loss': mean_score_loss})
+                    wandb.log({'epoch': epoch, 'total_loss': mean_total_loss, 'seg_loss': mean_seg_loss, 'score_loss': mean_score_loss})
 
             if model_save_dir is not None:
                 name_model = self.finetuned_model_name + '_last_model.pt'
@@ -397,7 +401,8 @@ class TrainableSAM2(SAM2ImagePredictor):
                                             Time: {scores_eval["prediction_time"]}''')
 
                     if use_wandb:
-                        wandb.log({ "eval_total_loss": scores_eval["total_loss"],
+                        wandb.log({ "epoch": epoch,
+                                    "eval_total_loss": scores_eval["total_loss"],
                                     "eval_focal_loss": scores_eval["focal_loss"],
                                     "eval_dice_loss": scores_eval["dice_loss"],
                                     "eval_iou_loss": scores_eval["iou_loss"],
@@ -428,7 +433,8 @@ class TrainableSAM2(SAM2ImagePredictor):
                                             Time: {scores_eval["prediction_time"]}''')
 
                     if use_wandb:
-                        wandb.log({ "eval_total_loss": scores_eval["total_loss"],
+                        wandb.log({ "epoch": epoch,
+                                    "eval_total_loss": scores_eval["total_loss"],
                                     "eval_seg_loss": scores_eval["seg_loss"],
                                     "eval_score_loss": scores_eval["score_loss"],
                                     "eval_dice": scores_eval["dice"],

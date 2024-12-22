@@ -568,6 +568,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         """Load images and masks. Allows to filter files."""
         nb_imgs = 0
         nb_filtered_out = 0
+        file_counts = {}
 
         for _, f in enumerate(os.listdir(self.root + 'processed/')):
             nb_imgs += 1
@@ -575,6 +576,12 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                 if not self.filter_files(f):
                     nb_filtered_out += 1
                     continue
+
+            i_value = f.split('_')[0]
+            if i_value not in file_counts:
+                file_counts[i_value] = 0
+
+            file_counts[i_value] += 1
 
             current_path = self.root + 'processed/' + f
             for g in os.listdir(current_path):
@@ -609,6 +616,10 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             print(f'Number of neg point prompts: {len(self.prompts["neg_points"])}')
             print(f'Number of box prompts: {len(self.prompts["box"])}')
             print(f'Number of mask prompts: {len(self.prompts["mask"])}')
+
+            print('Files analysis:')
+            for key, value in file_counts.items():
+                print(f'Dataset key: {key}, count: {value}')
 
     def __getitem__(self, idx : int) -> tuple:
         img_idx = idx % len(self.images)

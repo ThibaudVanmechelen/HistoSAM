@@ -76,4 +76,4 @@ class Custom_SAM2_Loss(nn.Module):
 
         total_loss = seg_loss + self.score_weight * score_loss
 
-        return total_loss, {'seg' : seg_loss.item(), 'score' :score_loss.item()}
+        return total_loss, {'seg' : seg_loss.item(), 'score' : score_loss.item()}

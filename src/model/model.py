@@ -92,6 +92,7 @@ class TrainableSam(Sam):
                 original_size=image_record["original_size"],
             )
 
+            iou_predictions = iou_predictions.squeeze(0) 
             best_mask_idx = torch.argmax(iou_predictions)
             outputs.append(masks[0][best_mask_idx]) # outputs the mask with highest iou
             iou_scores.append(iou_predictions[best_mask_idx])

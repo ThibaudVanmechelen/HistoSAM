@@ -1,11 +1,12 @@
 import os
+import gc
 import torch
 
 from torch.utils.data import DataLoader
 from .train import train_with_config
 from model.sam2_model import TrainableSAM2
 from model.model import load_model
-from dataset_processing.dataset import SamDatasetFromFiles
+from dataset_processing.dataset import SamDatasetFromFiles, filter_dataset
 from dataset_processing.preprocess import collate_fn
 from .evaluate import test_loop
 from utils.config import load_config
@@ -76,13 +77,13 @@ def run_embeddings(dataset_path : str, config_path : str, checkpoint_path_sam : 
 
 
 def run_finetuning(training_dataset_path : str, validation_dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, 
-                   is_original_sam_loss: bool, output_dir_path : str, finetuning_name : str):
+                   is_original_sam_loss: bool, output_dir_path : str, finetuning_name : str, use_dataset: list[bool]):
     print("Loading the configs")
     config = load_config(config_path)
 
     if not is_sam2:
         print("Starting Training for SAM...")
-        scores = train_with_config(config, checkpoint_path, training_dataset_path, validation_dataset_path, use_original_sam_loss = is_original_sam_loss)
+        scores = train_with_config(config, checkpoint_path, training_dataset_path, validation_dataset_path, use_original_sam_loss = is_original_sam_loss, use_dataset = use_dataset)
 
     else:
         print("Starting Training for SAM2...")
@@ -90,12 +91,12 @@ def run_finetuning(training_dataset_path : str, validation_dataset_path : str, c
                               do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder, 
                               img_embeddings_as_input = config.sam2.img_embeddings_as_input, device = config.misc.device, weight_path = config.sam2.weight_path)
 
-        scores = model.train_model(config, training_dataset_path, validation_dataset_path, use_original_sam_loss = is_original_sam_loss)
+        scores = model.train_model(config, training_dataset_path, validation_dataset_path, use_original_sam_loss = is_original_sam_loss, use_dataset = use_dataset)
 
     save_scores(scores, os.path.join(output_dir_path, f"scores_{finetuning_name}.json"), os.path.join(output_dir_path, f"avg_{finetuning_name}.json")) # TODO check if save_scores will work
 
 
-def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str):
+def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool]):
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -122,7 +123,7 @@ def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_pat
         random_box_shift = config.testing.random_box_shift,
         mask_prompt_type = config.testing.mask_prompt_type,
         box_around_mask = config.testing.box_around_prompt_mask,
-        filter_files = None,
+        filter_files = lambda x: filter_dataset(x, use_dataset),
         load_on_cpu = True
     )
 
@@ -130,8 +131,12 @@ def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_pat
 
     if not is_sam2:
         print("Starting Testing for SAM...")
-        model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.sam.use_img_embeddings, return_iou = True).to(config.misc.device)
-        model.load_state_dict(torch.load(config.sam.last_model_path))
+        model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.testing.use_img_embeddings, return_iou = True).to(config.misc.device)
+
+        if config.sam.last_model_path:
+            print("Loading the last model...")
+            model.load_state_dict(torch.load(config.sam.last_model_path))
+
         scores = test_loop(model, dataloader, config.misc.device, config.sam.input_mask_eval, return_mean = False)
 
     else:
@@ -141,5 +146,10 @@ def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_pat
                               img_embeddings_as_input = config.sam2.img_embeddings_as_input, device = config.misc.device, weight_path = config.sam2.weight_path)
 
         scores = model.test_loop(dataloader, input_mask_eval = config.sam2.input_mask_eval)
+
+    del model
+    del dataloader
+    torch.cuda.empty_cache()
+    gc.collect()
 
     save_scores(scores, os.path.join(output_dir_path, f"scores_{testing_name}.json"), os.path.join(output_dir_path, f"avg_{testing_name}.json"))
