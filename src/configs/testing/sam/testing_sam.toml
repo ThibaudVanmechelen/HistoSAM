@@ -1,6 +1,6 @@
-title = "Configuration to finetune SAM on all datasets"
+title = "Configuration to test SAM"
 
-[training]
+[testing]
 points = true
 box = true
 negative_points = true
@@ -13,23 +13,13 @@ random_box_shift = 20
 mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
 box_around_prompt_mask = false
 use_img_embeddings = true
-
 batch_size = 32
-lr = 1e-5
-epochs = 30
-train_from_last_checkpoint = false
-last_checkpoint_path = ''
-last_model_path = ''
-model_save_dir = '/content/drive/MyDrive/TFE/results/finetuning/sam/all/'
-
-[validation]
-frequency = 1
 
 [sam]
 model_type = 'vit_b'
 input_size = 1024
+last_model_path = ''
+input_mask_eval = false
 
 [misc]
 device = 'cuda'
-wandb = true
-project_name = 'Finetuning_SAM_ALL_BCE_LOSS'

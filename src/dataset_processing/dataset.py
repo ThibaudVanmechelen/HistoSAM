@@ -503,11 +503,6 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             print('Loading data...')
 
         self._load_data()
-
-        if load_on_cpu:
-            self.images = [plt.imread(img) for img in self.images]
-            self.masks = [plt.imread(mask) for mask in self.masks]
-
         self.PROMPT_COMBINATIONS_LIST = {
             'single': [['points'], ['box'], ['neg_points'], ['mask']],
             'pair': [['box', 'points'], ['box', 'neg_points'], ['points', 'neg_points'], ['mask', 'points'], ['mask', 'neg_points']],
@@ -570,8 +565,11 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         nb_filtered_out = 0
         file_counts = {}
 
-        for _, f in enumerate(os.listdir(self.root + 'processed/')):
+        for u, f in enumerate(os.listdir(self.root + 'processed/')):
             nb_imgs += 1
+            if self.verbose and u % 100 == 0:
+                print(f"Progress: {u} iterations")
+
             if self.filter_files is not None:
                 if not self.filter_files(f):
                     nb_filtered_out += 1
@@ -587,14 +585,20 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             for g in os.listdir(current_path):
                 if g.endswith('.jpg'):
                     if 'mask' in g:
-                        self.masks.append(self.root + 'processed/' + f + '/' + g)
+                        if not self.load_on_cpu:
+                            self.masks.append(self.root + 'processed/' + f + '/' + g)
+                        else:
+                            self.masks.append(plt.imread(self.root + 'processed/' + f + '/' + g))
                     else:
-                        self.images.append(self.root + 'processed/' + f + '/' + g)
+                        if not self.load_on_cpu:
+                            self.images.append(self.root + 'processed/' + f + '/' + g)
+                        else:
+                            self.images.append(plt.imread(self.root + 'processed/' + f + '/' + g))
 
                 if self.use_img_embeddings:
                     if (g == 'img_embedding.pt' and not self.is_sam2_prompt) or (g == 'sam2_img_embedding.pt' and self.is_sam2_prompt):
                         path_ = os.path.join(current_path, g)
-                        self.img_embeddings.append(torch.load(path_))
+                        self.img_embeddings.append(torch.load(path_).to('cpu'))
 
                 if g == 'prompt.pt':
                     path_ = os.path.join(current_path, g)

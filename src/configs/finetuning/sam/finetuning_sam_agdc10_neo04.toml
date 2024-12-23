@@ -1,4 +1,4 @@
-title = "Configuration to finetune SAM on LBTD-AGDC10"
+title = "Configuration to finetune SAM on LBTD-AGDC10 and LBTD-NEO04"
 
 [training]
 points = true
@@ -14,13 +14,13 @@ mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_
 box_around_prompt_mask = false
 use_img_embeddings = true
 
-batch_size = 32
+batch_size = 64
 lr = 1e-5
 epochs = 30
 train_from_last_checkpoint = false
 last_checkpoint_path = ''
 last_model_path = ''
-model_save_dir = '/content/drive/MyDrive/TFE/results/finetuning/sam/agdc10/'
+model_save_dir = '/content/drive/MyDrive/TFE/results/finetuning/sam/agdc10_neo04/'
 
 [validation]
 frequency = 1
@@ -32,4 +32,4 @@ input_size = 1024
 [misc]
 device = 'cuda'
 wandb = true
-project_name = 'Finetuning_SAM_AGDC10'
+project_name = 'Finetuning_SAM_AGDC10_NEO04'

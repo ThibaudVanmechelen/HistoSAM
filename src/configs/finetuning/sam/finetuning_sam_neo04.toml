@@ -1,6 +1,6 @@
-title = "Configuration to test SAM"
+title = "Configuration to finetune SAM on LBTD-NEO04"
 
-[testing]
+[training]
 points = true
 box = true
 negative_points = true
@@ -13,13 +13,23 @@ random_box_shift = 20
 mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
 box_around_prompt_mask = false
 use_img_embeddings = true
-batch_size = 16
+
+batch_size = 64
+lr = 1e-5
+epochs = 30
+train_from_last_checkpoint = false
+last_checkpoint_path = ''
+last_model_path = ''
+model_save_dir = '/content/drive/MyDrive/TFE/results/finetuning/sam/neo04/'
+
+[validation]
+frequency = 1
 
 [sam]
 model_type = 'vit_b'
 input_size = 1024
-last_model_path = ''
-input_mask_eval = false
 
 [misc]
 device = 'cuda'
+wandb = true
+project_name = 'Finetuning_SAM_NEO04'
