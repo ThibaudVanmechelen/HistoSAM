@@ -56,7 +56,8 @@ def file_verification(dataset_path, is_post_processing):
             print(error)
 
         print("Error: redo procedure")
-        
+
+
 def run_embeddings(dataset_path : str, config_path : str, checkpoint_path_sam : str, checkpoint_path_sam2 : str):
     print("Loading the configs")
     config = load_config(config_path)
