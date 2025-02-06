@@ -598,7 +598,22 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                 if self.use_img_embeddings:
                     if (g == 'img_embedding.pt' and not self.is_sam2_prompt) or (g == 'sam2_img_embedding.pt' and self.is_sam2_prompt):
                         path_ = os.path.join(current_path, g)
-                        self.img_embeddings.append(torch.load(path_).to('cpu'))
+                        loaded_data = torch.load(path_)
+
+                        if isinstance(loaded_data, dict):
+                            for key, value in loaded_data.items():
+                                if key == 'image_embed':
+                                    loaded_data[key] = value.squeeze(0).to('cpu')
+
+                                elif key == 'high_res_feats':
+                                    for i, v in enumerate(value):
+                                        loaded_data[key][i] = v.squeeze(0).to('cpu')
+                                else:
+                                    raise ValueError(f'Key {key} not supported')
+
+                            self.img_embeddings.append(loaded_data)
+                        else:
+                            self.img_embeddings.append(loaded_data.to('cpu'))
 
                 if g == 'prompt.pt':
                     path_ = os.path.join(current_path, g)

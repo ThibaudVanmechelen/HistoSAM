@@ -76,7 +76,7 @@ def run_embeddings(dataset_path : str, config_path : str, checkpoint_path_sam : 
     print("Done with embeddings !")
 
 
-def run_finetuning(training_dataset_path : str, validation_dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, 
+def run_finetuning(training_dataset_path : str, validation_dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool,
                    is_original_sam_loss: bool, output_dir_path : str, finetuning_name : str, use_dataset: list[bool]):
     print("Loading the configs")
     config = load_config(config_path)
@@ -88,23 +88,23 @@ def run_finetuning(training_dataset_path : str, validation_dataset_path : str, c
     else:
         print("Starting Training for SAM2...")
         model = TrainableSAM2(finetuned_model_name = config.sam2.model_name, cfg = config.sam2.model_type, checkpoint = checkpoint_path, mode = "train",
-                              do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder, 
-                              img_embeddings_as_input = config.sam2.img_embeddings_as_input, device = config.misc.device, weight_path = config.sam2.weight_path)
+                              do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder,
+                              img_embeddings_as_input = config.training.use_img_embeddings, device = config.misc.device, weight_path = config.sam2.weight_path)
 
         scores = model.train_model(config, training_dataset_path, validation_dataset_path, use_original_sam_loss = is_original_sam_loss, use_dataset = use_dataset)
 
-    save_scores(scores, os.path.join(output_dir_path, f"scores_{finetuning_name}.json"), os.path.join(output_dir_path, f"avg_{finetuning_name}.json")) # TODO check if save_scores will work
+    save_scores(scores, os.path.join(output_dir_path, f"scores_{finetuning_name}.json"), os.path.join(output_dir_path, f"avg_{finetuning_name}.json"))
 
 
-def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool]):
+def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool], last_model_path : str = None):
     print("Loading the configs")
     config = load_config(config_path)
 
     print("Creating the dataset...")
     prompt_type = {
-        'points' : config.testing.points, 
-        'box' : config.testing.box, 
-        'neg_points' : config.testing.negative_points, 
+        'points' : config.testing.points,
+        'box' : config.testing.box,
+        'neg_points' : config.testing.negative_points,
         'mask' : config.testing.mask_prompt
     }
 
@@ -133,17 +133,17 @@ def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_pat
         print("Starting Testing for SAM...")
         model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.testing.use_img_embeddings, return_iou = True).to(config.misc.device)
 
-        if config.sam.last_model_path:
+        if last_model_path:
             print("Loading the last model...")
-            model.load_state_dict(torch.load(config.sam.last_model_path))
+            model.load_state_dict(torch.load(last_model_path))
 
         scores = test_loop(model, dataloader, config.misc.device, config.sam.input_mask_eval, return_mean = False)
 
     else:
         print("Starting Testing for SAM2...")
         model = TrainableSAM2(finetuned_model_name = config.sam2.model_name, cfg = config.sam2.model_type, checkpoint = checkpoint_path, mode = "eval",
-                              do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder, 
-                              img_embeddings_as_input = config.sam2.img_embeddings_as_input, device = config.misc.device, weight_path = config.sam2.weight_path)
+                              do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder,
+                              img_embeddings_as_input = config.testing.use_img_embeddings, device = config.misc.device, weight_path = last_model_path)
 
         scores = model.test_loop(dataloader, input_mask_eval = config.sam2.input_mask_eval)
 

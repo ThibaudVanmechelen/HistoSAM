@@ -38,7 +38,7 @@ class TrainableSAM2(SAM2ImagePredictor):
         self.img_embeddings_as_input = img_embeddings_as_input
         self.running_device = device
 
-        if weight_path is not None:
+        if weight_path:
             self.model.load_state_dict(torch.load(weight_path))
 
         self.do_train_prompt_encoder = do_train_prompt_encoder
@@ -49,23 +49,6 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         if do_train_mask_decoder:
             self.model.sam_mask_decoder.train(True)
-
-    def setup_training_parameters(self, lr : float, weight_decay : float, step_size : int, gamma : float, batch_size : int):
-        self.optimizer = AdamW(params = self.model.parameters(), lr = lr, weight_decay = weight_decay)
-        self.scheduler = StepLR(self.optimizer, step_size = step_size // batch_size, gamma = gamma)
-        self.scaler = GradScaler()
-
-        print(f'Optimizer parameters: lr = {lr}, weight_decay = {weight_decay}')
-        print(f'Scheduler parameters: step_size = {step_size // batch_size}, gamma = {gamma}')
-
-    def move_to_gpu(self, data : list[dict], device : str = 'cuda') -> list[dict]:
-        """Move data to a device."""
-        for value in data:
-            for key in value:
-                if type(value[key]) == torch.Tensor:
-                    value[key] = value[key].to(device)
-
-        return data
     
     def load_embedding_to_model(self, data : list[dict]):
         self._orig_hw = []
@@ -161,7 +144,7 @@ class TrainableSAM2(SAM2ImagePredictor):
             valid_dataset = SamDatasetFromFiles(
                 root = validation_dataset_path,
                 transform = None,
-                use_img_embeddings = config.validation.use_img_embeddings,
+                use_img_embeddings = config.training.use_img_embeddings,
                 prompt_type = prompt_type,
                 n_points = config.training.n_points,
                 n_neg_points = config.training.n_neg_points,
@@ -189,15 +172,11 @@ class TrainableSAM2(SAM2ImagePredictor):
         else:
             loss_fn = Custom_SAM2_Loss()
 
-        self.setup_training_parameters(lr = config.training.lr, weight_decay = config.training.weight_decay, 
-                                       step_size = config.training.step_size, gamma = config.training.gamma, 
-                                       batch_size = config.training.batch_size)
+        self.optimizer = AdamW(params = self.model.parameters(), lr = config.training.lr, betas = (0.9, 0.999), weight_decay = config.training.weight_decay) 
 
         if config.training.train_from_last_checkpoint:
             checkpoint = torch.load(config.training.last_checkpoint_path)
             self.optimizer.load_state_dict(checkpoint['optimizer'])
-            self.scaler.load_state_dict(checkpoint['scaler'])
-            self.scheduler.load_state_dict(checkpoint['scheduler'])
 
             return self.train_loop(trainloader, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
                                             use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], 
@@ -235,109 +214,104 @@ class TrainableSAM2(SAM2ImagePredictor):
                 score_losses = []
 
             for data, mask in tqdm(trainloader, disable = not verbose, desc = f'Epoch {epoch + 1}/{epochs} - Training'):
-                data = self.move_to_gpu(data, self.running_device)
                 mask = mask.to(self.running_device)
 
-                with autocast(): # modifying floating point precision to speed up the training
-                    if self.img_embeddings_as_input:
-                        self.reset_predictor()
-                        
-                        self._is_image_set = True
-                        self._is_batch = True
+                if self.img_embeddings_as_input:
+                    self.reset_predictor()
+                    
+                    self._is_image_set = True
+                    self._is_batch = True
 
-                        self.load_embedding_to_model(data)
-                            
+                    self.load_embedding_to_model(data)
+                        
+                else:
+                    sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
+                    self.set_image_batch(sam2_image_batch) # this function does not compute grad for the img encoder
+
+                batch_best_pred = []
+                batch_best_ious = []
+
+                num_images = len(self._features['image_embed'])
+                for img_idx in range(num_images):
+                    image_record = data[img_idx]
+                    converted_prompts = self.convert_prompts_from_sam_to_sam2_format(image_record)
+
+                    mask_input, unnorm_coords, labels, unnorm_box = self._prep_prompts(
+                        converted_prompts.get('point_coords', None), 
+                        converted_prompts.get('point_labels', None), 
+                        box = converted_prompts.get('boxes', None), 
+                        mask_logits = converted_prompts.get('mask_inputs', None), 
+                        normalize_coords = True,
+                        img_idx = img_idx)
+                    
+                    if unnorm_coords is not None:
+                        concat_points = (unnorm_coords, labels)
                     else:
-                        sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
-                        self.set_image_batch(sam2_image_batch) # this function does not compute grad for the img encoder
+                        concat_points = None
 
-                    batch_best_pred = []
-                    batch_best_ious = []
+                    if unnorm_box is not None:
+                        box_coords = unnorm_box.reshape(-1, 2, 2)
 
-                    num_images = len(self._features['image_embed'])
-                    for img_idx in range(num_images):
-                        image_record = data[img_idx]
-                        converted_prompts = self.convert_prompts_from_sam_to_sam2_format(image_record)
+                        box_labels = torch.tensor([[2, 3]], dtype = torch.int, device = unnorm_box.device)
+                        box_labels = box_labels.repeat(unnorm_box.size(0), 1)
 
-                        mask_input, unnorm_coords, labels, unnorm_box = self._prep_prompts(
-                            converted_prompts.get('point_coords', None), 
-                            converted_prompts.get('point_labels', None), 
-                            box = converted_prompts.get('boxes', None), 
-                            mask_logits = converted_prompts.get('mask_inputs', None), 
-                            normalize_coords = True,
-                            img_idx = img_idx)
-                        
-                        if unnorm_coords is not None:
-                            concat_points = (unnorm_coords, labels)
+                        if concat_points is not None:
+                            concat_coords = torch.cat([box_coords, concat_points[0]], dim = 1)
+                            concat_labels = torch.cat([box_labels, concat_points[1]], dim = 1)
+
+                            concat_points = (concat_coords, concat_labels)
                         else:
-                            concat_points = None
+                            concat_points = (box_coords, box_labels)
 
-                        if unnorm_box is not None:
-                            box_coords = unnorm_box.reshape(-1, 2, 2)
+                    sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(points = concat_points, boxes = None, masks = mask_input,)
 
-                            box_labels = torch.tensor([[2, 3]], dtype = torch.int, device = unnorm_box.device)
-                            box_labels = box_labels.repeat(unnorm_box.size(0), 1)
+                    batched_mode = (concat_points is not None and concat_points[0].shape[0] > 1)
+                    high_res_features = [feat_level[img_idx].unsqueeze(0) for feat_level in self._features["high_res_feats"]]
 
-                            if concat_points is not None:
-                                concat_coords = torch.cat([box_coords, concat_points[0]], dim = 1)
-                                concat_labels = torch.cat([box_labels, concat_points[1]], dim = 1)
+                    low_res_masks, iou_predictions, _ , _ = self.model.sam_mask_decoder(
+                        image_embeddings = self._features["image_embed"][img_idx].unsqueeze(0),
+                        image_pe = self.model.sam_prompt_encoder.get_dense_pe(),
+                        sparse_prompt_embeddings = sparse_embeddings,
+                        dense_prompt_embeddings = dense_embeddings,
+                        multimask_output = True,
+                        repeat_image = batched_mode,
+                        high_res_features = high_res_features,
+                    )
 
-                                concat_points = (concat_coords, concat_labels)
-                            else:
-                                concat_points = (box_coords, box_labels)
+                    prediction_masks = self._transforms.postprocess_masks(low_res_masks, self._orig_hw[img_idx]) # Shape: (B, C, H, W), here B is just 1 TODO check this dim
+                    prediction_masks = prediction_masks.squeeze(0) # Shape: (C, H, W)
+                    iou_predictions = iou_predictions.squeeze(0) # Shape: C
 
-                        sparse_embeddings, dense_embeddings = self.model.sam_prompt_encoder(points = concat_points, boxes = None, masks = mask_input,)
+                    most_probable_mask_idx = iou_predictions.argmax()
+                    prediction_masks = prediction_masks[most_probable_mask_idx, :, :]
+                    prediction_iou = iou_predictions[most_probable_mask_idx]
 
-                        batched_mode = (concat_points is not None and concat_points[0].shape[0] > 1)
-                        high_res_features = [feat_level[img_idx].unsqueeze(0) for feat_level in self._features["high_res_feats"]]
+                    batch_best_pred.append(prediction_masks)
+                    batch_best_ious.append(prediction_iou)
 
-                        low_res_masks, iou_predictions, _ , _ = self.model.sam_mask_decoder(
-                            image_embeddings = self._features["image_embed"][img_idx].unsqueeze(0),
-                            image_pe = self.model.sam_prompt_encoder.get_dense_pe(),
-                            sparse_prompt_embeddings = sparse_embeddings,
-                            dense_prompt_embeddings = dense_embeddings,
-                            multimask_output = True,
-                            repeat_image = batched_mode,
-                            high_res_features = high_res_features,
-                        )
+                pred_masks = torch.stack(batch_best_pred) # Shape: (N, H, W)
+                pred_ious = torch.stack(batch_best_ious) # Shape: (N, 1) TODO check this 2 dims
 
-                        prediction_masks = self._transforms.postprocess_masks(low_res_masks, self._orig_hw[img_idx]) # Shape: (B, C, H, W), here B is just 1 TODO check this dim
-                        prediction_masks = prediction_masks.squeeze(0) # Shape: (C, H, W)
-                        iou_predictions = iou_predictions.squeeze(0) # Shape: C
+                if is_original_loss:
+                    loss, loss_parts = loss_fn(pred_masks.float(), mask.float(), pred_ious.float())
 
-                        most_probable_mask_idx = iou_predictions.argmax()
-                        prediction_masks = prediction_masks[most_probable_mask_idx, :, :]
-                        prediction_iou = iou_predictions[most_probable_mask_idx]
+                    focal_losses.append(loss_parts['focal'])
+                    dice_losses.append(loss_parts['dice'])
+                    iou_losses.append(loss_parts['iou'])
 
-                        batch_best_pred.append(prediction_masks)
-                        batch_best_ious.append(prediction_iou)
+                else:
+                    loss, loss_parts = loss_fn(pred_masks.float(), mask.float(), pred_ious.float(), self.mask_threshold)
 
-                    pred_masks = torch.stack(batch_best_pred) # Shape: (N, H, W)
-                    pred_ious = torch.stack(batch_best_ious) # Shape: (N, 1) TODO check this 2 dims
+                    segmentation_losses.append(loss_parts['seg'])
+                    score_losses.append(loss_parts['score'])
 
-                    if is_original_loss:
-                        loss, loss_parts = loss_fn(pred_masks.float(), mask.float(), pred_ious.float())
+                total_losses.append(loss.item())
 
-                        focal_losses.append(loss_parts['focal'])
-                        dice_losses.append(loss_parts['dice'])
-                        iou_losses.append(loss_parts['iou'])
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm = 1.0)
 
-                    else:
-                        loss, loss_parts = loss_fn(pred_masks.float(), mask.float(), pred_ious.float(), self.mask_threshold)
-
-                        segmentation_losses.append(loss_parts['seg'])
-                        score_losses.append(loss_parts['score'])
-
-                    total_losses.append(loss.item())
-
-                    self.scaler.scale(loss).backward()
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm = 1.0)
-
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
-
-                    self.model.zero_grad()
-                    self.scheduler.step()
+                self.optimizer.step()
+                self.model.zero_grad()
 
             mean_total_loss = sum(total_losses) / len(total_losses)
             scores['training_total_loss'].append(mean_total_loss)
@@ -380,9 +354,7 @@ class TrainableSAM2(SAM2ImagePredictor):
             
                 torch.save({
                     'epoch': epoch, 
-                    'optimizer': self.optimizer.state_dict(),
-                    'scheduler': self.scheduler.state_dict(),
-                    'scaler': self.scaler.state_dict()
+                    'optimizer': self.optimizer.state_dict()
                 }, name_checkpoint)
 
             if evalloader is not None and epoch % eval_frequency == 0:

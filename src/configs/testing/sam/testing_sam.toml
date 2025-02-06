@@ -13,7 +13,7 @@ random_box_shift = 20
 mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
 box_around_prompt_mask = false
 use_img_embeddings = true
-batch_size = 32
+batch_size = 16
 
 [sam]
 model_type = 'vit_b'

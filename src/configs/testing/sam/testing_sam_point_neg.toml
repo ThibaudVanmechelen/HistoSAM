@@ -1,13 +1,13 @@
-title = "Configuration to test SAM on box prompt and point prompt"
+title = "Configuration to test SAM on negative point prompt"
 
 [testing]
-points = true
-box = true
-negative_points = false
+points = false
+box = false
+negative_points = true
 mask_prompt = false
-n_points = 5
-n_neg_points = 0
-negative_points_inside_box = false
+n_points = 0
+n_neg_points = 5
+negative_points_inside_box = true
 points_near_center = 4
 random_box_shift = 20
 mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'

@@ -1,10 +1,10 @@
-title = "Configuration to test SAM on box prompt and point prompt"
+title = "Configuration to test SAM on mask prompt and point prompt"
 
 [testing]
 points = true
-box = true
+box = false
 negative_points = false
-mask_prompt = false
+mask_prompt = true
 n_points = 5
 n_neg_points = 0
 negative_points_inside_box = false
