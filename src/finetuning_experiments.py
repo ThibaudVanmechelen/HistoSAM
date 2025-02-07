@@ -154,3 +154,69 @@ def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_pat
     gc.collect()
 
     save_scores(scores, os.path.join(output_dir_path, f"scores_{testing_name}.json"), os.path.join(output_dir_path, f"avg_{testing_name}.json"))
+
+
+def run_finetuning_testing_per_prompt(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool], last_model_path : str = None):
+    print("Loading the configs")
+    config = load_config(config_path)
+
+    print("Loading the model...")
+    if not is_sam2:
+        model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.testing.use_img_embeddings, return_iou = True).to(config.misc.device)
+
+        if last_model_path:
+            print("Loading the last SAM model...")
+            model.load_state_dict(torch.load(last_model_path))
+
+    else:
+        model = TrainableSAM2(finetuned_model_name = config.sam2.model_name, cfg = config.sam2.model_type, checkpoint = checkpoint_path, mode = "eval",
+                            do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder,
+                            img_embeddings_as_input = config.testing.use_img_embeddings, device = config.misc.device, weight_path = last_model_path)
+        
+    print("Creating the datasets...")
+    prompt_type_array = [
+        { 'points' : False, 'box' : False, 'neg_points' : False, 'mask' : True },
+        { 'points' : False, 'box' : False, 'neg_points' : True, 'mask' : False },
+        { 'points' : False, 'box' : True, 'neg_points' : False, 'mask' : False },
+        { 'points' : True, 'box' : False, 'neg_points' : False, 'mask' : False }
+    ]
+
+    for prompt_type in prompt_type_array:
+        current_prompt = [key for key, value in prompt_type.items() if value][0]
+
+        dataset = SamDatasetFromFiles(
+            root = dataset_path,
+            transform = None,
+            use_img_embeddings = config.testing.use_img_embeddings,
+            prompt_type = prompt_type,
+            n_points = config.testing.n_points,
+            n_neg_points = config.testing.n_neg_points,
+            verbose = True,
+            to_dict = True,
+            is_sam2_prompt = is_sam2,
+            neg_points_inside_box = config.testing.negative_points_inside_box,
+            points_near_center = config.testing.points_near_center,
+            random_box_shift = config.testing.random_box_shift,
+            mask_prompt_type = config.testing.mask_prompt_type,
+            box_around_mask = config.testing.box_around_prompt_mask,
+            filter_files = lambda x: filter_dataset(x, use_dataset),
+            load_on_cpu = True
+        )
+
+        dataloader = DataLoader(dataset, batch_size = config.testing.batch_size, shuffle = False, collate_fn = collate_fn)
+
+        if not is_sam2:
+            scores = test_loop(model, dataloader, config.misc.device, config.sam.input_mask_eval, return_mean = False)
+
+        else:
+            scores = model.test_loop(dataloader, input_mask_eval = config.sam2.input_mask_eval)
+
+        del dataloader
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        save_scores(scores, os.path.join(output_dir_path, f"scores_{testing_name}_{current_prompt}.json"), os.path.join(output_dir_path, f"avg_{testing_name}_{current_prompt}.json"))
+
+    del model
+    torch.cuda.empty_cache()
+    gc.collect()

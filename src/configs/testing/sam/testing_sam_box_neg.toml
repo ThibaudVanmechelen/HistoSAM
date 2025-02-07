@@ -1,0 +1,25 @@
+title = "Configuration to test SAM on box prompt and negative point prompt"
+
+[testing]
+points = false
+box = true
+negative_points = true
+mask_prompt = false
+n_points = 0
+n_neg_points = 5
+negative_points_inside_box = false
+points_near_center = 4
+random_box_shift = 20
+mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
+box_around_prompt_mask = false
+use_img_embeddings = true
+batch_size = 16
+
+[sam]
+model_type = 'vit_b'
+input_size = 1024
+last_model_path = ''
+input_mask_eval = false
+
+[misc]
+device = 'cuda'

@@ -1,0 +1,35 @@
+title = "Configuration to finetune SAM with box prompt and negative point prompt"
+
+[training]
+points = false
+box = true
+negative_points = true
+mask_prompt = false
+n_points = 0
+n_neg_points = 5
+negative_points_inside_box = false
+points_near_center = 4
+random_box_shift = 20
+mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
+box_around_prompt_mask = false
+use_img_embeddings = true
+
+batch_size = 64
+lr = 1e-5
+epochs = 30
+train_from_last_checkpoint = false
+last_checkpoint_path = ''
+last_model_path = ''
+model_save_dir = '/content/drive/MyDrive/TFE/results/finetuning/sam/all_box_neg/'
+
+[validation]
+frequency = 1
+
+[sam]
+model_type = 'vit_b'
+input_size = 1024
+
+[misc]
+device = 'cuda'
+wandb = true
+project_name = 'Finetuning_SAM_ALL_BOX_NEG'
