@@ -9,13 +9,15 @@ from dataset_processing.dataset import (
 from dataset_processing.preprocess import collate_fn
 from .evaluate import eval_loop
 from model.model import load_model
+from model.histo_sam import HistoSAM
 from segment_anything.modeling.sam import Sam
-from torch import nn
+
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from utils.loss import SAM_Loss
+from typing import Union
 
 def train_with_config(config: dict, checkpoint_path : str, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]) -> dict:
     model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.training.use_img_embeddings, return_iou = True).to(config.misc.device)
@@ -105,6 +107,121 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
     return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
                       config.misc.device, use_wandb = config.misc.wandb, last_epoch = -1, eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
 
+
+def train_histo_sam_with_config(config: dict, checkpoint_paths : list[str], training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]) -> dict:
+    model = HistoSAM(model_type = config.sam.model_type,
+                     checkpoint_path = checkpoint_paths[0],
+                     hist_encoder_type = config.encoder.type,
+                     hist_encoder_checkpoint_path = checkpoint_paths[1],
+                     not_use_sam_encoder = config.sam.not_use_sam_encoder,
+                     embedding_as_input = config.training.use_img_embeddings,
+                     up_sample_with_deconvolution = config.encoder.deconv,
+                     freeze_sam_img_encoder = True,
+                     freeze_prompt_encoder = False,
+                     freeze_mask_decoder = False,
+                     return_iou = True,
+                     device = config.misc.device                  
+    )
+
+    nb_params = sum(p.numel() for p in model.parameters())
+    print(f"Model parameters: {nb_params / 1e6:.2f}M")
+    print(f"Model trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+    print("Parameters summary: ")
+    print(f"SAM: image encoder parameters: {sum(p.numel() for p in model.model.image_encoder.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.model.image_encoder.parameters() if p.requires_grad) / 1e6:.2f}M")
+    print(f"SAM: prompt encoder parameters: {sum(p.numel() for p in model.model.prompt_encoder.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.model.prompt_encoder.parameters() if p.requires_grad) / 1e6:.2f}M")
+    print(f"SAM: mask decoder parameters: {sum(p.numel() for p in model.model.mask_decoder.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.model.mask_decoder.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+    print(f"Encoder parameters: {sum(p.numel() for p in model.hist_encoder.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.hist_encoder.parameters() if p.requires_grad) / 1e6:.2f}M")
+    print(f"UpSample parameters: {sum(p.numel() for p in model.upsample.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.upsample.parameters() if p.requires_grad) / 1e6:.2f}M")
+    print(f"Neck parameters: {sum(p.numel() for p in model.neck.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.neck.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+    prompt_type = {
+        'points' : config.training.points, 
+        'box' : config.training.box, 
+        'neg_points' : config.training.negative_points, 
+        'mask' : config.training.mask_prompt
+    }
+
+    train_dataset = SamDatasetFromFiles(
+        root = training_dataset_path,
+        transform = None,
+        use_img_embeddings = config.training.use_img_embeddings,
+        prompt_type = prompt_type,
+        n_points = config.training.n_points,
+        n_neg_points = config.training.n_neg_points,
+        verbose = True,
+        to_dict = True,
+        is_sam2_prompt = False,
+        neg_points_inside_box = config.training.negative_points_inside_box,
+        points_near_center = config.training.points_near_center,
+        random_box_shift = config.training.random_box_shift,
+        mask_prompt_type = config.training.mask_prompt_type,
+        box_around_mask = config.training.box_around_prompt_mask,
+        filter_files = lambda x: filter_dataset(x, use_dataset),
+        load_on_cpu = config.training.load_on_cpu,
+        generate_prompt_on_get = config.training.prompt_on_get,
+        is_combined_embedding = config.training.is_combined_embedding
+    )
+
+    trainloader = DataLoader(train_dataset, batch_size = config.training.batch_size, shuffle = True, collate_fn = collate_fn)
+
+    if validation_dataset_path is not None:
+        valid_dataset = SamDatasetFromFiles(
+            root = validation_dataset_path,
+            transform = None,
+            use_img_embeddings = config.training.use_img_embeddings,
+            prompt_type = prompt_type,
+            n_points = config.training.n_points,
+            n_neg_points = config.training.n_neg_points,
+            verbose = True,
+            to_dict = True,
+            is_sam2_prompt = False,
+            neg_points_inside_box = config.training.negative_points_inside_box,
+            points_near_center = config.training.points_near_center,
+            random_box_shift = config.training.random_box_shift,
+            mask_prompt_type = config.training.mask_prompt_type,
+            box_around_mask = config.training.box_around_prompt_mask,
+            filter_files = lambda x: filter_dataset(x, use_dataset),
+            load_on_cpu = config.training.load_on_cpu,
+            generate_prompt_on_get = config.training.prompt_on_get,
+            is_combined_embedding = config.training.is_combined_embedding
+        )
+
+        validloader = DataLoader(valid_dataset, batch_size = config.training.batch_size, shuffle = False, collate_fn = collate_fn)
+    else:
+        validloader = None
+
+    if config.misc.wandb:
+        wandb.init(project = config.misc.project_name, config = config)
+
+    if use_original_sam_loss:
+        loss_fn = SAM_Loss()
+    else:
+        loss_fn = BCEWithLogitsLoss()
+
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr = config.training.lr, betas = (0.9, 0.999), weight_decay = 1e-4) # original SAM parameters
+
+    if config.training.train_from_last_checkpoint:
+        checkpoint = torch.load(config.training.last_checkpoint_path)
+        checkpoint_params = sum(p.numel() for p in checkpoint['model'].values())
+        print(f"Checkpoint parameters: {checkpoint_params / 1e6:.2f}M")
+
+        model.load_state_dict(torch.load(config.training.last_model_path))
+        optimizer.load_state_dict(checkpoint['optimizer'])
+
+        if checkpoint_params == nb_params:
+            print("✅ All parameters were loaded!")
+        else:
+            print("⚠️ Mismatch: some parameters were not loaded correctly!")
+
+        return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
+                                          config.misc.device, use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
+    
+    return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
+                      config.misc.device, use_wandb = config.misc.wandb, last_epoch = -1, eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
+
+
 def data_to_gpu(data : list[dict], device : str = 'cuda') -> list[dict]:
     """Move data to a device."""
     for value in data:
@@ -114,7 +231,8 @@ def data_to_gpu(data : list[dict], device : str = 'cuda') -> list[dict]:
 
     return data
 
-def train_loop(model : Sam, trainloader : DataLoader, optimizer : Optimizer, epochs : int, loss_fn : callable, 
+
+def train_loop(model : Union[Sam, HistoSAM], trainloader : DataLoader, optimizer : Optimizer, epochs : int, loss_fn : callable, 
                evalloader : DataLoader = None, model_save_dir : str = None, device : str = 'cpu', verbose : bool = True, 
                use_wandb : bool = False, last_epoch : int = -1, eval_frequency : int = 1, is_original_loss : bool = False) -> dict:
     """Function to train a model on a dataloader.

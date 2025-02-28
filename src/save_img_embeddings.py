@@ -6,6 +6,7 @@ import torch
 from dataset_processing.dataset import SAMDataset
 from model.model import load_model
 from model.sam2_model import TrainableSAM2
+from model.histo_sam import HistoSAM
 from tqdm import tqdm
 
 def save_embeddings(config : dict, dataset_path : str, checkpoint_path : str, is_sam2 : bool, save_prompt : bool):
@@ -61,6 +62,48 @@ def save_embeddings(config : dict, dataset_path : str, checkpoint_path : str, is
     del dataset
     torch.cuda.empty_cache()
     gc.collect()
+
+
+def compute_embeddings_histo_sam(config : dict, dataset_path : str, checkpoint_paths : list):
+    model = HistoSAM(
+        model_type = config.sam.model_type,
+        checkpoint_path = checkpoint_paths[0],
+        hist_encoder_type = config.encoder.type,
+        hist_encoder_checkpoint_path = checkpoint_paths[1],
+        not_use_sam_encoder = config.sam.not_use_sam_encoder,
+        embedding_as_input = False,
+        up_sample_with_deconvolution = False,
+        freeze_sam_img_encoder = True,
+        freeze_prompt_encoder = True,
+        freeze_mask_decoder = True,
+        return_iou = True,
+        device = config.misc.device                  
+    )
+
+    dataset = SAMDataset(
+        root = dataset_path,
+        prompt_type = {'points' : False, 'box' : False, 'neg_points' : False, 'mask' : False},
+        n_points = 0,
+        n_neg_points = 0,
+        verbose = True,
+        to_dict = True,
+        use_img_embeddings = False,
+        neg_points_inside_box = False,
+        points_near_center = 0,
+        random_box_shift = 0,
+        mask_prompt_type = 'truth',
+        box_around_mask = False,
+        is_sam2_prompt = False,
+        is_embedding_saving = True
+    )
+
+    model.compute_all_img_embeddings(dataset)
+
+    del model
+    del dataset
+    torch.cuda.empty_cache()
+    gc.collect()
+
 
 def remove_pt_files(dataset_path):
     pt_files = {"prompt.pt", "img_embedding.pt", "sam2_img_embedding.pt"}

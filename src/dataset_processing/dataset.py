@@ -64,9 +64,13 @@ class AbstractSAMDataset(Dataset, ABC):
         if self.prompt_type['points']:
             self.prompts['points'] = np.array([self._get_points(self.masks[i], i, n_points, near_center) for i in tqdm(range(len(self.images)), desc='Computing points...', total=len(self.images), disable=not self.verbose)])
 
-    def _get_points(self, mask_path : str, index : int, n_points : int = 1, near_center : float = -1):
+    def _get_points(self, mask_path : str, index : int, n_points : int = 1, near_center : float = -1, opened_mask : np.ndarray = None):
         """Get n_points points from the mask"""
-        mask = plt.imread(mask_path)
+        if mask_path:
+            mask = plt.imread(mask_path)
+        else:
+            mask = opened_mask
+
         idx = np.arange(mask.shape[0] * mask.shape[1])
         flatten_mask = mask.flatten()
 
@@ -82,12 +86,17 @@ class AbstractSAMDataset(Dataset, ABC):
         return points
 
     def _get_negative_points(self, mask_path : str, index : int, n_neg_points : int, inside_box : bool = False, 
-                             zoom_out : float = 1.0, random_box_shift : int = 0, box_around_mask : bool = False, mask_prompt_type : str = 'truth'):
+                             zoom_out : float = 1.0, random_box_shift : int = 0, box_around_mask : bool = False, 
+                             mask_prompt_type : str = 'truth', opened_mask : np.ndarray = None):
         """Get n_neg_points points outside the mask
         n_neg_points: int, number of negative points to get
         inside_box: bool, if True, negative points will be inside the bounding box of the mask (but still outside the mask),
         Please refer to _get_box as the other parameters correspond to the same parameters in _get_box."""
-        mask = plt.imread(mask_path)
+        if mask_path:
+            mask = plt.imread(mask_path)
+        else:
+            mask = opened_mask
+
         idx = np.arange(mask.shape[0] * mask.shape[1])
         flatten_mask = mask.flatten()
         flatten_mask = np.where(flatten_mask > 0, 1, 0)
@@ -96,7 +105,7 @@ class AbstractSAMDataset(Dataset, ABC):
             dilation = 100 # dilation is applied to both box_mask and mask to avoid points near the true mask
 
             if self.prompts['box'][index] is None:
-                x_min, y_min, x_max, y_max = self._get_box(mask_path, index, zoom_out, random_box_shift, box_around_mask, mask_prompt_type)
+                x_min, y_min, x_max, y_max = self._get_box(mask_path, index, zoom_out, random_box_shift, box_around_mask, mask_prompt_type, opened_mask = opened_mask)
             else:
                 x_min, y_min, x_max, y_max = self.prompts['box'][index]
 
@@ -118,7 +127,7 @@ class AbstractSAMDataset(Dataset, ABC):
         return points
     
     def _get_box(self, mask_path : str, index : int, zoom_out : float=1.0, random_box_shift : int = 0, 
-                 box_around_mask : bool = False, mask_prompt_type : str = 'truth') -> tuple[int, int, int, int]:
+                 box_around_mask : bool = False, mask_prompt_type : str = 'truth', opened_mask : np.ndarray = None) -> tuple[int, int, int, int]:
         """Get a box from the mask
         zoom_out: float, factor to zoom out the box. Add a margin around the mask.
         random_box_shift: int, if greater than 0, the bounding box corners will be shifted randomly by a value between -random_box_shift and random_box_shift
@@ -127,13 +136,16 @@ class AbstractSAMDataset(Dataset, ABC):
 
         if box_around_mask:
             if self.prompts['mask'][index] is None:
-                mask = self._get_mask(mask_path, index, mask_prompt_type=mask_prompt_type)
+                mask = self._get_mask(mask_path, index, mask_prompt_type = mask_prompt_type, opened_mask = opened_mask)
             else:
                 mask = self.prompts['mask'][index]
 
             mask = resize(mask, (IMG_RESOLUTION, IMG_RESOLUTION), interpolation = INTER_NEAREST)
         else:
-            mask = plt.imread(mask_path)
+            if mask_path:
+                mask = plt.imread(mask_path)
+            else:
+                mask = opened_mask
 
         x_min, y_min, x_max, y_max = mask.shape[0], mask.shape[1], 0, 0
 
@@ -163,11 +175,15 @@ class AbstractSAMDataset(Dataset, ABC):
 
         return int(x_min), int(y_min), int(x_max), int(y_max)
 
-    def _get_mask(self, mask_path : str, index : int, mask_prompt_type : str = 'truth') -> np.ndarray:
+    def _get_mask(self, mask_path : str, index : int, mask_prompt_type : str = 'truth', opened_mask : np.ndarray = None) -> np.ndarray:
         """Get the mask from the mask path/
         mask_prompt_type: str, type of mask to use for automatic annotation. Can be 'truth' or 'morphology' or 'scribble'  or 'loose_dilation'. Default is 'truth'.
         'truth': the mask is the truth mask, 'morphology': the mask is the truth mask dilated by a 40x40 kernel, 'scribble': the mask is a simulated scribbled mask by the user."""
-        mask = resize(plt.imread(mask_path), (INPUT_MASK_RESOLUTION, INPUT_MASK_RESOLUTION), interpolation = INTER_NEAREST)
+        if mask_path:
+            mask = resize(plt.imread(mask_path), (INPUT_MASK_RESOLUTION, INPUT_MASK_RESOLUTION), interpolation = INTER_NEAREST)
+        else:
+            mask = resize(opened_mask, (INPUT_MASK_RESOLUTION, INPUT_MASK_RESOLUTION), interpolation = INTER_NEAREST)
+
         if mask_prompt_type == 'truth':
             return np.where(mask > 0, 1, 0)
         
@@ -462,7 +478,8 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
                  random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, neg_points_inside_box : bool = False, 
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
-                 box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False):
+                 box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False,
+                 generate_prompt_on_get : bool = False, is_combined_embedding : bool = False):
         """Initialize SAMDataset class.
         Can only be initialized from files obtained from save_img_embeddings.py script.
         """
@@ -470,6 +487,9 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         self.root = root
         self.transform = transform
         self.use_img_embeddings = use_img_embeddings
+        self.is_combined_embedding = is_combined_embedding
+        self.load_on_cpu = load_on_cpu
+        self.generate_prompt_on_get = generate_prompt_on_get
 
         self.images = []
         self.masks = []
@@ -480,6 +500,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             'neg_points': [],
             'mask': []
         }
+        self.prompt_embeddings = []
 
         self.prompt_type = prompt_type
         self.verbose = verbose
@@ -488,12 +509,14 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         self.n_neg_points = n_neg_points
         self.near_center = points_near_center
         self.inside_box = neg_points_inside_box
+        self.random_box_shift = random_box_shift
+        self.mask_prompt_type = mask_prompt_type
+        self.box_around_mask = box_around_mask
 
         self.to_dict = to_dict
         self.is_sam2_prompt = is_sam2_prompt
         self.zoom_out = zoom_out
 
-        self.load_on_cpu = load_on_cpu
         self.filter_files = filter_files
 
         if random_state is not None:
@@ -512,6 +535,14 @@ class SamDatasetFromFiles(AbstractSAMDataset):
 
         self.prompt_combinations = self.select_combinations(self.prompt_type, self.PROMPT_COMBINATIONS_LIST)
         self.nb_combinations = len(self.prompt_combinations)
+
+        if self.generate_prompt_on_get:
+            self.prompts = {
+                'points': [None for _ in range(len(self.images))], 
+                'box': [None for _ in range(len(self.images))], 
+                'neg_points': [None for _ in range(len(self.images))],
+                'mask': [None for _ in range(len(self.images))]
+            }
 
         print('Selected prompt combinations: ')
         for c in self.prompt_combinations:
@@ -583,46 +614,54 @@ class SamDatasetFromFiles(AbstractSAMDataset):
 
             current_path = self.root + 'processed/' + f
             for g in os.listdir(current_path):
+                full_path = os.path.join(current_path, g)
+
                 if g.endswith('.jpg'):
                     if 'mask' in g:
-                        if not self.load_on_cpu:
-                            self.masks.append(self.root + 'processed/' + f + '/' + g)
-                        else:
-                            self.masks.append(plt.imread(self.root + 'processed/' + f + '/' + g))
+                        self.masks.append(full_path if not self.load_on_cpu else plt.imread(full_path))
                     else:
-                        if not self.load_on_cpu:
-                            self.images.append(self.root + 'processed/' + f + '/' + g)
-                        else:
-                            self.images.append(plt.imread(self.root + 'processed/' + f + '/' + g))
+                        self.images.append(full_path if not self.load_on_cpu else plt.imread(full_path))
 
                 if self.use_img_embeddings:
                     if (g == 'img_embedding.pt' and not self.is_sam2_prompt) or (g == 'sam2_img_embedding.pt' and self.is_sam2_prompt):
-                        path_ = os.path.join(current_path, g)
-                        loaded_data = torch.load(path_)
+                        if self.load_on_cpu:
+                            loaded_data = torch.load(full_path)
 
-                        if isinstance(loaded_data, dict):
-                            for key, value in loaded_data.items():
-                                if key == 'image_embed':
-                                    loaded_data[key] = value.squeeze(0).to('cpu')
+                            if isinstance(loaded_data, dict):
+                                if not self.is_combined_embedding:
+                                    for key, value in loaded_data.items():
+                                        if key == 'image_embed':
+                                            loaded_data[key] = value.squeeze(0).to('cpu')
 
-                                elif key == 'high_res_feats':
-                                    for i, v in enumerate(value):
-                                        loaded_data[key][i] = v.squeeze(0).to('cpu')
+                                        elif key == 'high_res_feats':
+                                            for i, v in enumerate(value):
+                                                loaded_data[key][i] = v.squeeze(0).to('cpu')
+
+                                        else:
+                                            raise ValueError(f'Key {key} not supported')
+                                        
                                 else:
-                                    raise ValueError(f'Key {key} not supported')
+                                    for key, value in loaded_data.items():
+                                        loaded_data[key] = value.to('cpu')
 
-                            self.img_embeddings.append(loaded_data)
+                                self.img_embeddings.append(loaded_data)
+
+                            else:
+                                self.img_embeddings.append(loaded_data.to('cpu'))
+
                         else:
-                            self.img_embeddings.append(loaded_data.to('cpu'))
+                            self.img_embeddings.append(full_path)
 
-                if g == 'prompt.pt':
-                    path_ = os.path.join(current_path, g)
-                    temp_prompt = torch.load(path_)
+                if g == 'prompt.pt' and self.generate_prompt_on_get == False:
+                    if self.load_on_cpu:
+                        temp_prompt = torch.load(full_path)
 
-                    self.prompts['points'].append(temp_prompt['points'])
-                    self.prompts['neg_points'].append(temp_prompt['neg_points'])
-                    self.prompts['box'].append(temp_prompt['box'])
-                    self.prompts['mask'].append(temp_prompt['mask'])
+                        self.prompts['points'].append(temp_prompt['points'])
+                        self.prompts['neg_points'].append(temp_prompt['neg_points'])
+                        self.prompts['box'].append(temp_prompt['box'])
+                        self.prompts['mask'].append(temp_prompt['mask'])
+                    else:
+                        self.prompt_embeddings.append(full_path)
 
         if self.verbose:
             print(f'Initial number of images: {nb_imgs}')
@@ -644,20 +683,83 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         img_idx = idx % len(self.images)
         prompt_idx = idx // len(self.images)
 
+        prompt = {'points' : None, 'box' : None, 'neg_points' : None, 'mask' : None}
+
         if self.load_on_cpu:
             img = self.images[img_idx]
             mask = self.masks[img_idx]
+
+            if self.generate_prompt_on_get == False:
+                for key in self.prompt_combinations[prompt_idx]:
+                    prompt[key] = self.prompts[key][img_idx]
+
+            else:
+                for key in self.prompt_combinations[prompt_idx]:
+                    if key == 'points':
+                        prompt[key] = self._get_points(mask_path = None, index = -1, n_points = self.n_points, near_center = self.near_center, opened_mask = mask)
+
+                    elif key == 'box':
+                        prompt[key] = self._get_box(mask_path = None, index = img_idx, zoom_out = self.zoom_out, random_box_shift = self.random_box_shift, 
+                                                    box_around_mask = self.box_around_mask, mask_prompt_type = self.mask_prompt_type, opened_mask = mask)
+
+                    elif key == 'neg_points':
+                        prompt[key] = self._get_negative_points(mask_path = None, index = img_idx, n_neg_points = self.n_neg_points, inside_box = self.inside_box, 
+                             zoom_out = self.zoom_out, random_box_shift = self.random_box_shift, box_around_mask = self.box_around_mask, 
+                             mask_prompt_type = self.mask_prompt_type, opened_mask = mask)
+
+                    else: # key = mask
+                        prompt[key] = self._get_mask(mask_path = None, index = -1, mask_prompt_type = self.mask_prompt_type, opened_mask = mask)
+
+            if self.use_img_embeddings:
+                img_embedding = self.img_embeddings[img_idx]
+
         else:
             img = plt.imread(self.images[img_idx])
             mask = plt.imread(self.masks[img_idx])
 
-        prompt = {'points' : None, 'box' : None, 'neg_points' : None, 'mask' : None}
- 
-        for key in self.prompt_combinations[prompt_idx]:
-            prompt[key] = self.prompts[key][img_idx]
+            if self.generate_prompt_on_get == False:
+                loaded_prompt = torch.load(self.prompt_embeddings[img_idx], map_location = 'cpu')
+
+                for key in self.prompt_combinations[prompt_idx]:
+                    prompt[key] = loaded_prompt[key]
+
+            else:
+                for key in self.prompt_combinations[prompt_idx]:
+                    if key == 'points':
+                        prompt[key] = self._get_points(mask_path = self.masks[img_idx], index = -1, n_points = self.n_points, near_center = self.near_center)
+
+                    elif key == 'box':
+                        prompt[key] = self._get_box(mask_path = self.masks[img_idx], index = img_idx, zoom_out = self.zoom_out, random_box_shift = self.random_box_shift, 
+                                                    box_around_mask = self.box_around_mask, mask_prompt_type = self.mask_prompt_type)
+
+                    elif key == 'neg_points':
+                        prompt[key] = self._get_negative_points(mask_path = self.masks[img_idx], index = img_idx, n_neg_points = self.n_neg_points, inside_box = self.inside_box, 
+                             zoom_out = self.zoom_out, random_box_shift = self.random_box_shift, box_around_mask = self.box_around_mask, mask_prompt_type = self.mask_prompt_type)
+
+                    else: # key = mask
+                        prompt[key] = self._get_mask(mask_path = self.masks[img_idx], index = -1, mask_prompt_type = self.mask_prompt_type)
+
+            if self.use_img_embeddings:
+                img_embedding = torch.load(self.img_embeddings[img_idx], map_location = 'cpu')
+                if isinstance(img_embedding, dict):
+                    if not self.is_combined_embedding:
+                        for key, value in img_embedding.items():
+                            if key == 'image_embed':
+                                img_embedding[key] = value.squeeze(0).to('cpu')
+
+                            elif key == 'high_res_feats':
+                                for i, v in enumerate(value):
+                                    img_embedding[key][i] = v.squeeze(0).to('cpu')
+
+                            else:
+                                raise ValueError(f'Key {key} not supported')
+                            
+                    else:
+                        for key, value in img_embedding.items():
+                            img_embedding[key] = value.to('cpu')
 
         if self.use_img_embeddings:
-            return to_dict(self.img_embeddings[img_idx], prompt, use_img_embeddings = self.use_img_embeddings, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
+            return to_dict(img_embedding, prompt, use_img_embeddings = self.use_img_embeddings, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
         
         if self.transform:
             img, mask = self.transform(img, mask)

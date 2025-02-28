@@ -3,15 +3,16 @@ import gc
 import torch
 
 from torch.utils.data import DataLoader
-from .train import train_with_config
+from .train import train_with_config, train_histo_sam_with_config
 from model.sam2_model import TrainableSAM2
 from model.model import load_model
-from dataset_processing.dataset import SamDatasetFromFiles, filter_dataset
+from dataset_processing.dataset import SamDatasetFromFiles, filter_dataset, SAMDataset
 from dataset_processing.preprocess import collate_fn
-from .evaluate import test_loop
+from .evaluate import test_loop, evaluate_histo_SAM_with_config
 from utils.config import load_config
 from utils.save_scores import save_scores
 from .save_img_embeddings import save_embeddings
+from .save_img_embeddings import compute_embeddings_histo_sam
 
 def file_verification(dataset_path, is_post_processing):
     files_pre = {"mask.jpg", "img.jpg"}
@@ -183,6 +184,7 @@ def run_finetuning_testing_per_prompt(dataset_path : str, config_path : str, che
 
     for prompt_type in prompt_type_array:
         current_prompt = [key for key, value in prompt_type.items() if value][0]
+        print(f"Current prompt: {current_prompt}")
 
         dataset = SamDatasetFromFiles(
             root = dataset_path,
@@ -220,3 +222,167 @@ def run_finetuning_testing_per_prompt(dataset_path : str, config_path : str, che
     del model
     torch.cuda.empty_cache()
     gc.collect()
+
+
+def run_recirculation_testing(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool], last_model_path : str = None):
+    print("Loading the configs")
+    config = load_config(config_path)
+
+    print("Creating the dataset...")
+    prompt_type = {
+        'points' : config.testing.points,
+        'box' : config.testing.box,
+        'neg_points' : config.testing.negative_points,
+        'mask' : config.testing.mask_prompt
+    }
+
+    dataset = SamDatasetFromFiles(
+        root = dataset_path,
+        transform = None,
+        use_img_embeddings = config.testing.use_img_embeddings,
+        prompt_type = prompt_type,
+        n_points = config.testing.n_points,
+        n_neg_points = config.testing.n_neg_points,
+        verbose = True,
+        to_dict = True,
+        is_sam2_prompt = is_sam2,
+        neg_points_inside_box = config.testing.negative_points_inside_box,
+        points_near_center = config.testing.points_near_center,
+        random_box_shift = config.testing.random_box_shift,
+        mask_prompt_type = config.testing.mask_prompt_type,
+        box_around_mask = config.testing.box_around_prompt_mask,
+        filter_files = lambda x: filter_dataset(x, use_dataset),
+        load_on_cpu = True
+    )
+
+    dataloader = DataLoader(dataset, batch_size = config.testing.batch_size, shuffle = False, collate_fn = collate_fn)
+
+    if not is_sam2:
+        print("Starting Testing for SAM...")
+        model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.testing.use_img_embeddings, return_iou = True).to(config.misc.device)
+
+        if last_model_path:
+            print("Loading the last model...")
+            model.load_state_dict(torch.load(last_model_path))
+
+        scores = test_loop(model, dataloader, config.misc.device, config.sam.input_mask_eval, return_mean = False, do_recirculation = True)
+
+    else:
+        print("Starting Testing for SAM2...")
+        model = TrainableSAM2(finetuned_model_name = config.sam2.model_name, cfg = config.sam2.model_type, checkpoint = checkpoint_path, mode = "eval",
+                              do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder,
+                              img_embeddings_as_input = config.testing.use_img_embeddings, device = config.misc.device, weight_path = last_model_path)
+
+        scores = model.test_loop(dataloader, input_mask_eval = config.sam2.input_mask_eval, do_recirculation = True)
+
+    del model
+    del dataloader
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    save_scores(scores, os.path.join(output_dir_path, f"scores_{testing_name}_recirculation.json"), os.path.join(output_dir_path, f"avg_{testing_name}_recirculation.json"))
+
+
+def run_mask_distribution_experiment(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, last_model_path : str = None):
+    print("Loading the configs")
+    config = load_config(config_path)
+
+    print("Creating the dataset...")
+    prompt_type = {
+        'points' : False,
+        'box' : False,
+        'neg_points' : False,
+        'mask' : True
+    }
+
+    dataset_loose_dilation = SAMDataset(
+        root = dataset_path,
+        prompt_type = prompt_type,
+        n_points = 0,
+        n_neg_points = 0,
+        verbose = True,
+        to_dict = True,
+        use_img_embeddings = False,
+        neg_points_inside_box = False,
+        points_near_center = 4,
+        random_box_shift = 20,
+        mask_prompt_type = 'loose_dilation',
+        box_around_mask = False,
+        is_sam2_prompt = is_sam2
+    )
+
+    dataset_scribble = SAMDataset(
+        root = dataset_path,
+        prompt_type = prompt_type,
+        n_points = 0,
+        n_neg_points = 0,
+        verbose = True,
+        to_dict = True,
+        use_img_embeddings = False,
+        neg_points_inside_box = False,
+        points_near_center = 4,
+        random_box_shift = 20,
+        mask_prompt_type = 'scribble',
+        box_around_mask = False,
+        is_sam2_prompt = is_sam2
+    )
+
+    dataloader_scribble = DataLoader(dataset_scribble, batch_size = config.testing.batch_size, shuffle = False, collate_fn = collate_fn)
+    dataloader_loose_dilation = DataLoader(dataset_loose_dilation, batch_size = config.testing.batch_size, shuffle = False, collate_fn = collate_fn)
+
+    if not is_sam2:
+        print("Starting Testing for SAM...")
+        model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = False, return_iou = True).to(config.misc.device)
+
+        if last_model_path:
+            print("Loading the last model...")
+            model.load_state_dict(torch.load(last_model_path))
+
+        scores_scribble = test_loop(model, dataloader_scribble, config.misc.device, config.sam.input_mask_eval, return_mean = False)
+        scores_loose_dilation = test_loop(model, dataloader_loose_dilation, config.misc.device, config.sam.input_mask_eval, return_mean = False)
+
+    else:
+        print("Starting Testing for SAM2...")
+        model = TrainableSAM2(finetuned_model_name = config.sam2.model_name, cfg = config.sam2.model_type, checkpoint = checkpoint_path, mode = "eval",
+                              do_train_prompt_encoder = config.sam2.train_prompt_encoder, do_train_mask_decoder = config.sam2.train_mask_decoder,
+                              img_embeddings_as_input = False, device = config.misc.device, weight_path = last_model_path)
+
+        scores_scribble = model.test_loop(dataloader_scribble, input_mask_eval = config.sam2.input_mask_eval)
+        scores_loose_dilation = model.test_loop(dataloader_loose_dilation, input_mask_eval = config.sam2.input_mask_eval)
+
+    del model
+    del dataloader_scribble
+    del dataloader_loose_dilation
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    save_scores(scores_scribble, os.path.join(output_dir_path, f"scores_{testing_name}_scribble.json"), os.path.join(output_dir_path, f"avg_{testing_name}_scribble.json"))
+    save_scores(scores_loose_dilation, os.path.join(output_dir_path, f"scores_{testing_name}_ld.json"), os.path.join(output_dir_path, f"avg_{testing_name}_ld.json"))
+
+
+def run_finetuning_histoSAM(training_dataset_path : str, validation_dataset_path : str, config_path : str, checkpoint_paths : list[str],
+                   is_original_sam_loss: bool, output_dir_path : str, finetuning_name : str, use_dataset: list[bool]):
+    print("Loading the config...")
+    config = load_config(config_path)
+
+    print("Computing the image embeddings for training set...")
+    compute_embeddings_histo_sam(config, training_dataset_path, checkpoint_paths)
+
+    print("Computing the image embeddings for validation set...")
+    compute_embeddings_histo_sam(config, validation_dataset_path, checkpoint_paths)
+
+    print("Starting Training for HistoSAM...")
+    scores = train_histo_sam_with_config(config, checkpoint_paths, training_dataset_path, validation_dataset_path, is_original_sam_loss, use_dataset)
+
+    save_scores(scores, os.path.join(output_dir_path, f"scores_{finetuning_name}.json"), os.path.join(output_dir_path, f"avg_{finetuning_name}.json"))
+
+
+def run_finetuning_testing_histoSAM(dataset_path : str, config_path : str, checkpoint_paths : list[str], output_dir_path : str, 
+                                    testing_name : str, use_dataset : list[bool], last_model_path : str = None):
+    print("Loading the config...")
+    config = load_config(config_path)
+
+    print("Evaluating HistoSAM...")
+    scores = evaluate_histo_SAM_with_config(config, dataset_path, checkpoint_paths, use_dataset, last_model_path)
+
+    save_scores(scores, os.path.join(output_dir_path, f"scores_{testing_name}.json"), os.path.join(output_dir_path, f"avg_{testing_name}.json"))

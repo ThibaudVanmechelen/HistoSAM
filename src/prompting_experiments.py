@@ -1,7 +1,7 @@
 import os
 from utils.config import load_config
 from utils.save_scores import save_scores
-from .evaluate import evaluate_standard_SAM_with_config, evaluate_without_prompts
+from .evaluate import evaluate_standard_SAM_with_config, evaluate_without_prompts, evaluate_SAM_iteratively
 
 def run_experiment_points(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
     print("Loading the configs")
@@ -136,33 +136,36 @@ def run_experiment_encoders_sam(dataset_path : str, config_dir_path : str, check
     print("Loading the configs")
     config_vit_h = load_config(os.path.join(config_dir_path, "prompting_vit_h.toml"))
     config_vit_l = load_config(os.path.join(config_dir_path, "prompting_vit_l.toml"))
+    config_vit_b = load_config(os.path.join(config_dir_path, "prompting_vit_b.toml"))
 
-    print("Starting prompting with ViT-L encoder")
-    scores_vit_l = evaluate_standard_SAM_with_config(config_vit_l, dataset_path, checkpoints[0], False)
-    save_scores(scores_vit_l, os.path.join(output_dir_path, "scores_vit_l.json"), os.path.join(output_dir_path, "avg_vit_l.json"))
-
-    print("Starting prompting with ViT-H encoder")
-    scores_vit_h = evaluate_standard_SAM_with_config(config_vit_h, dataset_path, checkpoints[1], False)
-    save_scores(scores_vit_h, os.path.join(output_dir_path, "scores_vit_h.json"), os.path.join(output_dir_path, "avg_vit_h.json"))
+    evaluate_SAM_iteratively(configs = [config_vit_b, config_vit_l, config_vit_h],
+                             dataset_path = dataset_path,
+                             checkpoint_paths = checkpoints,
+                             is_sam2 = False, 
+                             output_dirs = [
+                                 (os.path.join(output_dir_path, "scores_vit_b.json"), os.path.join(output_dir_path, "avg_vit_b.json")),
+                                 (os.path.join(output_dir_path, "scores_vit_l.json"), os.path.join(output_dir_path, "avg_vit_l.json")),
+                                 (os.path.join(output_dir_path, "scores_vit_h.json"), os.path.join(output_dir_path, "avg_vit_h.json"))
+                             ])
 
 
 def run_experiment_encoders_sam2(dataset_path : str, config_dir_path : str, checkpoints : list[str], output_dir_path : str):
     print("Loading the configs")
     config_hiera_t = load_config(os.path.join(config_dir_path, "prompting_hiera_t.toml"))
     config_hiera_s = load_config(os.path.join(config_dir_path, "prompting_hiera_s.toml"))
+    config_hiera_b = load_config(os.path.join(config_dir_path, "prompting_hiera_b.toml"))
     config_hiera_l = load_config(os.path.join(config_dir_path, "prompting_hiera_l.toml"))
 
-    print("Starting prompting with Hiera-Tiny encoder")
-    scores_hiera_t = evaluate_standard_SAM_with_config(config_hiera_t, dataset_path, checkpoints[0], True)
-    save_scores(scores_hiera_t, os.path.join(output_dir_path, "scores_hiera_t.json"), os.path.join(output_dir_path, "avg_hiera_t.json"))
-
-    print("Starting prompting with Hiera-Small encoder")
-    scores_hiera_s = evaluate_standard_SAM_with_config(config_hiera_s, dataset_path, checkpoints[1], True)
-    save_scores(scores_hiera_s, os.path.join(output_dir_path, "scores_hiera_s.json"), os.path.join(output_dir_path, "avg_hiera_s.json"))
-
-    print("Starting prompting with Hiera-Large encoder")
-    scores_hiera_l = evaluate_standard_SAM_with_config(config_hiera_l, dataset_path, checkpoints[2], True)
-    save_scores(scores_hiera_l, os.path.join(output_dir_path, "scores_hiera_l.json"), os.path.join(output_dir_path, "avg_hiera_l.json"))
+    evaluate_SAM_iteratively(configs = [config_hiera_t, config_hiera_s, config_hiera_b, config_hiera_l],
+                             dataset_path = dataset_path,
+                             checkpoint_paths = checkpoints,
+                             is_sam2 = True, 
+                             output_dirs = [
+                                 (os.path.join(output_dir_path, "scores_hiera_t.json"), os.path.join(output_dir_path, "avg_hiera_t.json")),
+                                 (os.path.join(output_dir_path, "scores_hiera_s.json"), os.path.join(output_dir_path, "avg_hiera_s.json")),
+                                 (os.path.join(output_dir_path, "scores_hiera_b.json"), os.path.join(output_dir_path, "avg_hiera_b.json")),
+                                 (os.path.join(output_dir_path, "scores_hiera_l.json"), os.path.join(output_dir_path, "avg_hiera_l.json"))
+                             ])
 
 
 def run_experiment_datasets(config_path : str, dataset_paths : list[str], checkpoint_path : str, output_dir_path : str, is_sam2 : bool):

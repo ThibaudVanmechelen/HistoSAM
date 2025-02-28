@@ -1,6 +1,7 @@
 import torch
 from functools import partial
 from typing import Any, Dict, List
+import torch.nn.functional as F
 
 from segment_anything.modeling import (
     ImageEncoderViT,
@@ -109,7 +110,7 @@ class TrainableSam(Sam):
 
     def get_image_embeddings(self, batched_input : List[Dict[str, Any]]) -> torch.Tensor:
         """Take batch_input and return the image embeddings."""
-        input_images = torch.stack([self.preprocess(x["image"]) for x in batched_input], dim=0)
+        input_images = torch.stack([self.preprocess(x["image"]) for x in batched_input], dim = 0)
 
         return self.image_encoder(input_images)
     
@@ -121,6 +122,31 @@ class TrainableSam(Sam):
             return sum(p.numel() for p in self.parameters())
         else:
             return sum(p.numel() for p in self.mask_decoder.parameters()) + sum(p.numel() for p in self.prompt_encoder.parameters())
+        
+    def predict_with_recirculation(self, batched_input : List[Dict[str, Any]], multimask_output: bool, binary_mask_output: bool = False):
+        if not self.return_iou:
+            pred = self.forward(batched_input, multimask_output, True)
+
+        else:
+            pred, iou_first_pass = self.forward(batched_input, multimask_output, True) # pred.shape: BxHxW
+
+        for i, input in enumerate(batched_input):
+            resized_mask = F.interpolate(
+                pred[i].unsqueeze(0).unsqueeze(0),  # Shape: (1, 1, H, W)
+                size=(256, 256),
+                mode = 'nearest-exact'
+            )
+
+            input['mask_inputs'] = resized_mask
+
+        if not self.return_iou:
+            pred = self.forward(batched_input, multimask_output, binary_mask_output)
+
+            return pred
+        else:
+            pred, iou_second_pass = self.forward(batched_input, multimask_output, binary_mask_output)
+
+            return pred, iou_second_pass
 
 
 def load_model(model_path : str, model_type : str = 'vit_b', img_embeddings_as_input : bool = False, return_iou : bool = False,) -> TrainableSam:

@@ -1,4 +1,4 @@
-title = "Evaluation for Hiera Large encoder"
+title = "Evaluation for Hiera Base encoder"
 
 [prompting_evaluation]
 points = false
@@ -22,7 +22,7 @@ input_size = 1024
 
 
 [sam2]
-model_type = 'sam2.1_hiera_l.yaml'
+model_type = 'sam2.1_hiera_b+.yaml'
 
 [misc]
 device = 'cuda' # 'cuda' or 'cpu'

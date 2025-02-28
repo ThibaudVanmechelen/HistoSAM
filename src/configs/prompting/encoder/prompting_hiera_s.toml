@@ -13,7 +13,7 @@ points_near_center = 4 # The higher the value, the closer to the center of mask 
 random_box_shift = 20 # Random shift in the box position in pixels (simulates the annotation error of an expert)
 mask_prompt_type = 'scribble' # 'truth', 'morphology', 'scribble', 'loose_dilation'
 box_around_prompt_mask = false
-batch_size = 4
+batch_size = 1
 input_mask_eval = false
 
 [sam]

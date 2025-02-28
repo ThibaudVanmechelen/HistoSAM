@@ -18,9 +18,9 @@ batch_size = 16
 lr = 1e-5
 weight_decay = 1e-4
 epochs = 30
-train_from_last_checkpoint = false
-last_checkpoint_path = ''
-last_model_path = ''
+train_from_last_checkpoint = true
+last_checkpoint_path = '/content/drive/MyDrive/TFE/results/finetuning/sam2/all_mask_both/finetuning_all_mask_both_last_checkpoint.pt'
+last_model_path = '/content/drive/MyDrive/TFE/results/finetuning/sam2/all_mask_both/finetuning_all_mask_both_last_model.pt'
 model_save_dir = '/content/drive/MyDrive/TFE/results/finetuning/sam2/all_mask_both/'
 
 [validation]

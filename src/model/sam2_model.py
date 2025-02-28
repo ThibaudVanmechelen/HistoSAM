@@ -1,14 +1,15 @@
 import os
+import cv2
 import time
 import torch
 import wandb
 import numpy as np
 
+import segmentation_refinement as refine
 from tqdm import tqdm
 from torch.optim import AdamW
-from torch.amp import GradScaler, autocast
-from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
 from dataset_processing.dataset import (
@@ -20,6 +21,8 @@ from dataset_processing.preprocess import collate_fn
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from utils.loss import SAM_Loss, Custom_SAM2_Loss
+from utils.metrics import compute_compactness, compute_perimeter_smoothness_ratio, compute_solidity, compute_size_retention, count_connected_components
+from utils.post_processing import post_process_segmentation_mask, post_process_with_crf
 
 IMG_RESOLUTION = 1024
 
@@ -554,7 +557,8 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return scores
 
-    def test_loop(self, dataloader : DataLoader, input_mask_eval : bool) -> dict:
+    def test_loop(self, dataloader : DataLoader, input_mask_eval : bool, is_eval_post_processing : bool = False, do_post_process : bool = False, 
+                  do_recirculation : bool = False, use_previous_prompts : bool = True, post_process_type : str = 'standard') -> dict:
         print("### Starting testing with SAM2 ! ###")
         scores = {
                 'prediction_time':[],
@@ -562,7 +566,16 @@ class TrainableSAM2(SAM2ImagePredictor):
                 'dice_input':[], 'iou_input':[], 'precision_input':[], 'recall_input':[]
                 }
 
+        if is_eval_post_processing:
+            scores.update({
+                'compactness': [], 'solidity': [], 'perimeter_smoothness': [],
+                'connected_components': [], 'size_retention': []
+            })
+
         self.model.eval()
+
+        if do_post_process and post_process_type == 'cascadepsp':
+            refiner = refine.Refiner(device = self.running_device)
 
         with torch.no_grad():
             for data, mask in tqdm(dataloader):
@@ -583,15 +596,20 @@ class TrainableSAM2(SAM2ImagePredictor):
                 else:
                     self.set_image_batch(sam2_image_batch)
 
-                pred_masks, pred_scores, _ = self.predict_batch(
-                    point_coords_batch = prompts_record.get("point_coords", None),
-                    point_labels_batch = prompts_record.get("point_labels", None),
-                    box_batch =  prompts_record.get("boxes", None),
-                    mask_input_batch = prompts_record.get("mask_inputs", None),
-                    multimask_output = True,
-                    return_logits = False,
-                    normalize_coords = True
-                ) # pred_masks are binary masks
+                if do_recirculation:
+                    pred_masks, pred_scores = self.predict_batch_with_recirculation(data, use_previous_prompts = use_previous_prompts)
+
+                else:
+                    pred_masks, pred_scores, _ = self.predict_batch(
+                        point_coords_batch = prompts_record.get("point_coords", None),
+                        point_labels_batch = prompts_record.get("point_labels", None),
+                        box_batch =  prompts_record.get("boxes", None),
+                        mask_input_batch = prompts_record.get("mask_inputs", None),
+                        multimask_output = True,
+                        return_logits = False,
+                        normalize_coords = True
+                    ) # pred_masks are binary masks
+
                 end_time = time.time()
 
                 assert len(pred_masks) == len(data), "There should be a prediction for each element in the batch."
@@ -603,6 +621,40 @@ class TrainableSAM2(SAM2ImagePredictor):
                 selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx, :, :]  # Shape: (N, H, W), extracting the masks
 
                 scores['prediction_time'].append(end_time - start_time)
+
+                if do_post_process:
+                    selected_masks_cpu = selected_masks.cpu().numpy().astype(np.uint8) * 255
+
+                    if post_process_type == 'standard':
+                        processed_masks = np.array([post_process_segmentation_mask(m) for m in selected_masks_cpu])
+
+                    elif post_process_type == 'densecrf':
+                        processed_masks = []
+
+                        for im in range(len(sam2_image_batch)):
+                            processed_masks.append(post_process_with_crf(sam2_image_batch[im], selected_masks_cpu[im]))
+
+                    elif post_process_type == 'cascadepsp':
+                        processed_masks = []
+
+                        for im in range(len(sam2_image_batch)):
+                            processed_masks.append(refiner.refine(sam2_image_batch[im], selected_masks_cpu[im], fast = False, L = 900))
+
+                    else:
+                        processed_masks = selected_masks_cpu
+
+                    for idx in range(len(processed_masks)):
+                        scores['size_retention'].append(compute_size_retention(selected_masks_cpu[idx], processed_masks[idx]))
+
+                    processed_masks = np.array(processed_masks)
+
+                    if processed_masks.max() > 1:
+                        processed_masks = (processed_masks > 127).astype(np.uint8)
+                    else:
+                        processed_masks = (processed_masks > 0).astype(np.uint8)
+
+                    selected_masks = torch.tensor(processed_masks, device = self.running_device)
+
                 y_true_flat = mask.view(mask.size(0), -1)  # Shape: (N, H * W)
                 y_pred_flat = selected_masks.view(selected_masks.size(0), -1)  # Shape: same
 
@@ -653,4 +705,110 @@ class TrainableSAM2(SAM2ImagePredictor):
                     scores['precision_input'].extend(precision_input.cpu().numpy())
                     scores['recall_input'].extend(recall_input.cpu().numpy())
 
+                if is_eval_post_processing:
+                    best_pred_cpu = selected_masks.cpu().numpy().astype(np.uint8) * 255
+
+                    for i in range(best_pred_cpu.shape[0]):
+                        processed_mask = best_pred_cpu[i]
+                        
+                        scores['compactness'].append(compute_compactness(processed_mask))
+                        scores['solidity'].append(compute_solidity(processed_mask))
+                        scores['perimeter_smoothness'].append(compute_perimeter_smoothness_ratio(processed_mask))
+                        scores['connected_components'].append(count_connected_components(processed_mask))
+
         return scores
+    
+    def predict_with_recirculation(self, data : dict, use_previous_prompts : bool = False, save_dir : str = None):
+        prompts_record = self.convert_prompts_from_sam_to_sam2_format(data)
+        sam2_image = self.convert_img_from_sam_to_sam2_format(data['image'])
+
+        self.set_image(sam2_image)
+
+        pred_masks, pred_scores, _ = self.predict(
+            point_coords_batch = prompts_record.get("point_coords", None),
+            point_labels_batch = prompts_record.get("point_labels", None),
+            box_batch =  prompts_record.get("boxes", None),
+            mask_input_batch = prompts_record.get("mask_inputs", None),
+            multimask_output = True,
+            return_logits = False,
+            normalize_coords = True
+        ) # pred_masks are binary masks
+
+        temp_mask = pred_masks[np.argmax(pred_scores)]
+        resized_mask = cv2.resize(temp_mask, (256, 256), interpolation = cv2.INTER_NEAREST)
+        most_probable_mask = resized_mask[np.newaxis, :, :]
+
+        if use_previous_prompts:
+            final_masks, final_scores, _ = self.predict(
+                point_coords_batch = prompts_record.get("point_coords", None),
+                point_labels_batch = prompts_record.get("point_labels", None),
+                box_batch =  prompts_record.get("boxes", None),
+                mask_input_batch = most_probable_mask,
+                multimask_output = True,
+                return_logits = False,
+                normalize_coords = True
+            )
+
+        else:
+            final_masks, final_scores, _ = self.predict(
+                point_coords_batch = None,
+                point_labels_batch = None,
+                box_batch =  None,
+                mask_input_batch = most_probable_mask,
+                multimask_output = True,
+                return_logits = False,
+                normalize_coords = True
+            )
+
+        if save_dir:
+            plt.imsave(os.path.join(save_dir, f'img.png'), sam2_image)
+            plt.imsave(os.path.join(save_dir, f'first_mask.png'), temp_mask)
+            plt.imsave(os.path.join(save_dir, f'mask_recirculated.png'), final_masks[np.argmax(final_scores)])
+
+        return final_masks, final_scores
+ 
+    def predict_batch_with_recirculation(self, data : list[dict], use_previous_prompts : bool = False):
+        prompts_record = self.convert_batch_prompts_from_sam_to_sam2_format(data)
+        sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
+
+        self.set_image_batch(sam2_image_batch)
+
+        pred_masks, pred_scores, _ = self.predict_batch(
+            point_coords_batch = prompts_record.get("point_coords", None),
+            point_labels_batch = prompts_record.get("point_labels", None),
+            box_batch =  prompts_record.get("boxes", None),
+            mask_input_batch = prompts_record.get("mask_inputs", None),
+            multimask_output = True,
+            return_logits = False,
+            normalize_coords = True
+        ) # pred_masks are binary masks
+
+        most_probable_masks = []
+        for i in range(len(pred_scores)):
+            temp_mask = pred_masks[i][np.argmax(pred_scores[i])]
+            temp_mask = cv2.resize(temp_mask, (256, 256), interpolation = cv2.INTER_NEAREST)
+            most_probable_masks.append(temp_mask[np.newaxis, :, :])
+
+        if use_previous_prompts:
+            final_masks, final_scores, _ = self.predict_batch(
+                point_coords_batch = prompts_record.get("point_coords", None),
+                point_labels_batch = prompts_record.get("point_labels", None),
+                box_batch =  prompts_record.get("boxes", None),
+                mask_input_batch = most_probable_masks,
+                multimask_output = True,
+                return_logits = False,
+                normalize_coords = True
+            )
+
+        else:
+            final_masks, final_scores, _ = self.predict_batch(
+                point_coords_batch = None,
+                point_labels_batch = None,
+                box_batch =  None,
+                mask_input_batch = most_probable_masks,
+                multimask_output = True,
+                return_logits = False,
+                normalize_coords = True
+            )
+
+        return final_masks, final_scores
