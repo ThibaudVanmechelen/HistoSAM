@@ -16,8 +16,8 @@ class HistEncoder(nn.Module):
         self.model_type = type_
 
         self.img_res = img_res
-        self.norm_mean = torch.tensor(norm_mean).view(1, 3, 1, 1).to(device)
-        self.norm_std = torch.tensor(norm_std).view(1, 3, 1, 1).to(device)
+        self.norm_mean = torch.tensor(norm_mean).view(3, 1, 1).to(device)
+        self.norm_std = torch.tensor(norm_std).view(3, 1, 1).to(device)
 
         self.device = device
 
@@ -48,6 +48,7 @@ class HistEncoder(nn.Module):
                 raise TypeError(f"Wrong image type: {type(img)}")
 
             img_tensor = F.interpolate(img_tensor.unsqueeze(0), size = self.img_res, mode = "bilinear", align_corners = False).squeeze(0)
+            img_tensor = img_tensor / 255.0
             img_tensor = (img_tensor - self.norm_mean) / self.norm_std
 
             processed_images.append(img_tensor)

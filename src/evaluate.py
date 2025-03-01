@@ -121,6 +121,7 @@ def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint
         else:
             print("Model loaded successfully!")
 
+    model.eval()
     scores = test_loop(model, dataloader, config.misc.device, config.prompting_evaluation.input_mask_eval, return_mean = False, 
                        is_eval_post_processing = config.prompting_evaluation.is_eval_post_processing, do_post_process = config.prompting_evaluation.do_post_process,
                        post_process_type = config.prompting_evaluation.post_process_type)

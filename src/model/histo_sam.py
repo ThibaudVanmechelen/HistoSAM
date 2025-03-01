@@ -213,7 +213,7 @@ class HistoSAM(nn.Module):
             input_images_encoder = self.hist_encoder.preprocess([x["image"]]) # Shape: 1xCxHxW
 
             with torch.no_grad():
-                image_embeddings = self.model.image_encoder(input_images_sam).squeeze(0) # TODO check: Shape: 64 x 64 x sam_embed_dim
+                image_embeddings = self.model.image_encoder(input_images_sam).squeeze(0) # Shape: 64 x 64 x sam_embed_dim
                 hist_image_embeddings = self.hist_encoder(input_images_encoder).squeeze(0) # Shape: number_patches x encoder_dim
 
             return {"sam": image_embeddings, "encoder": hist_image_embeddings}

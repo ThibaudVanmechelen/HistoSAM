@@ -106,5 +106,5 @@ def _build_fusion_sam(
     if checkpoint is not None:
         with open(checkpoint, "rb") as f:
             state_dict = torch.load(f)
-        sam.load_state_dict(state_dict)
+        sam.load_state_dict(state_dict, strict = False)
     return sam
