@@ -228,7 +228,7 @@ def evaluate_without_prompts(dataset_path : str, checkpoint_path : str, is_sam2 
     return scores
 
 
-def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, is_original_loss : bool = False) -> dict:
+def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, is_original_loss : bool = False, is_histoSAM : bool = False) -> dict:
     """Function to evaluate a model on a dataloader.
     model: nn.Module, model to evaluate
     dataloader: DataLoader, dataloader to use for the evaluation
@@ -272,7 +272,8 @@ def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda',
             scores['total_loss'].append(loss.item())
             scores['prediction_time'].append(end_time - start_time)
 
-            best_pred = torch.where(best_pred > model.mask_threshold, 1, 0).float() # to obtain binary mask for the metrics
+            m_thres = model.mask_threshold if not is_histoSAM else model.model.mask_threshold
+            best_pred = torch.where(best_pred > m_thres, 1, 0).float() # to obtain binary mask for the metrics
 
             y_true_flat = mask.view(mask.size(0), -1)
             y_pred_flat = best_pred.view(best_pred.size(0), -1)

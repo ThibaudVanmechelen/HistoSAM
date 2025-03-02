@@ -9,18 +9,22 @@ class InterpolationUpSampler(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
         self.output_size = output_size
+        self.input_size = int(math.sqrt(nb_patch)) 
 
-        self.grid_size = int(math.sqrt(nb_patch)) 
+        assert self.input_size in [14, 16], "input_size must be either 14 or 16 (nb_patches must be 196 or 256) !"
+
+        self.upsample = nn.Upsample(size = (output_size, output_size), mode = "bilinear", align_corners = False)
+        self.depthwise = nn.Conv2d(embed_dim, embed_dim, kernel_size = 3, stride = 1, padding = 1, groups = embed_dim)
+        self.pointwise = nn.Conv2d(embed_dim, embed_dim, kernel_size = 1)
 
     def forward(self, x):
         B, _, embed_dim = x.shape
 
-        H = self.grid_size
-        W = self.grid_size
+        H = self.input_size
+        W = self.input_size
 
         x = x.permute(0, 2, 1).reshape(B, embed_dim, H, W)
-
-        output = F.interpolate(x, size = (self.output_size, self.output_size), mode = 'bilinear', align_corners = False)
+        output = self.pointwise(self.depthwise(self.upsample(x)))
 
         return output.permute(0, 2, 3, 1) # Shape: B x 64 x 64 x embed_dim
     

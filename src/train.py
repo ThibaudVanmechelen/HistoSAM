@@ -216,10 +216,10 @@ def train_histo_sam_with_config(config: dict, checkpoint_paths : list[str], trai
             print("⚠️ Mismatch: some parameters were not loaded correctly!")
 
         return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
-                                          config.misc.device, use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
+                                          config.misc.device, use_wandb = config.misc.wandb, last_epoch = checkpoint['epoch'], eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss, is_histoSAM = True)
     
     return train_loop(model, trainloader, optimizer, config.training.epochs, loss_fn, validloader, config.training.model_save_dir, 
-                      config.misc.device, use_wandb = config.misc.wandb, last_epoch = -1, eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss)
+                      config.misc.device, use_wandb = config.misc.wandb, last_epoch = -1, eval_frequency = config.validation.frequency, is_original_loss = use_original_sam_loss, is_histoSAM = True)
 
 
 def data_to_gpu(data : list[dict], device : str = 'cuda') -> list[dict]:
@@ -234,7 +234,8 @@ def data_to_gpu(data : list[dict], device : str = 'cuda') -> list[dict]:
 
 def train_loop(model : Union[Sam, HistoSAM], trainloader : DataLoader, optimizer : Optimizer, epochs : int, loss_fn : callable, 
                evalloader : DataLoader = None, model_save_dir : str = None, device : str = 'cpu', verbose : bool = True, 
-               use_wandb : bool = False, last_epoch : int = -1, eval_frequency : int = 1, is_original_loss : bool = False) -> dict:
+               use_wandb : bool = False, last_epoch : int = -1, eval_frequency : int = 1, is_original_loss : bool = False, 
+               is_histoSAM : bool = False) -> dict:
     """Function to train a model on a dataloader.
     model: nn.Module, model to train
     trainloader: DataLoader, dataloader to use for the training
@@ -314,7 +315,7 @@ def train_loop(model : Union[Sam, HistoSAM], trainloader : DataLoader, optimizer
             torch.save({'epoch': epoch, 'optimizer': optimizer.state_dict()}, checkpoint_save_path)
 
         if evalloader is not None and epoch % eval_frequency == 0:
-            scores_eval = eval_loop(model, evalloader, device, is_original_loss = is_original_loss)
+            scores_eval = eval_loop(model, evalloader, device, is_original_loss = is_original_loss, is_histoSAM = is_histoSAM)
             scores_eval = { key: sum(value) / len(value) if value else 0 for key, value in scores_eval.items() }
 
             if is_original_loss:
