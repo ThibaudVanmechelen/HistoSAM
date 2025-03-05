@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 
 from model.sam2_model import TrainableSAM2
 from model.model import load_model
+from model.histo_sam import HistoSAM
 from dataset_processing.dataset import SAMDataset
 from utils.config import load_config
 from .utils.post_processing import post_process_segmentation_mask
@@ -55,6 +56,63 @@ def run_visualization(dataset_path : str, config_path : str, checkpoint_path : s
                               img_embeddings_as_input = False, device = config.misc.device, weight_path = last_model_path)
 
     test_on_sample(model, dataset, is_sam2, output_dir_path, file_name_format, nb_sample = config.testing.nb_sample, device = config.misc.device)
+
+    del model
+    del dataset
+    torch.cuda.empty_cache()
+    gc.collect()
+
+
+def run_visualization_histoSAM(dataset_path : str, config_path : str, checkpoint_paths : list[str], encoder_type : str, deconv: bool, 
+                               output_dir_path : str, file_name_format: str, last_model_path : str = None):
+    print("Loading the configs")
+    config = load_config(config_path)
+
+    print("Creating the dataset...")
+    prompt_type = {
+        'points' : config.prompting_evaluation.points,
+        'box' : config.prompting_evaluation.box,
+        'neg_points' : config.prompting_evaluation.negative_points,
+        'mask' : config.prompting_evaluation.mask_prompt
+    }
+
+    dataset = SAMDataset(
+        root = dataset_path,
+        prompt_type = prompt_type,
+        n_points = config.prompting_evaluation.n_points,
+        n_neg_points = config.prompting_evaluation.n_neg_points,
+        verbose = True,
+        to_dict = True,
+        use_img_embeddings = False,
+        neg_points_inside_box = config.prompting_evaluation.negative_points_inside_box,
+        points_near_center = config.prompting_evaluation.points_near_center,
+        random_box_shift = config.prompting_evaluation.random_box_shift,
+        mask_prompt_type = config.prompting_evaluation.mask_prompt_type,
+        box_around_mask = config.prompting_evaluation.box_around_prompt_mask,
+        is_sam2_prompt = False
+    )
+
+    model = HistoSAM(
+        model_type = config.sam.model_type,
+        checkpoint_path = checkpoint_paths[0],
+        hist_encoder_type = encoder_type,
+        hist_encoder_checkpoint_path = checkpoint_paths[1],
+        not_use_sam_encoder = config.sam.not_use_sam_encoder,
+        embedding_as_input = False,
+        up_sample_with_deconvolution = deconv,
+        freeze_sam_img_encoder = True,
+        freeze_prompt_encoder = True,
+        freeze_mask_decoder = True,
+        return_iou = False,
+        device = config.misc.device                  
+    )
+
+    if last_model_path:
+        print(f"Loading the model weights from {last_model_path}...")
+        state_dict = torch.load(last_model_path)
+        model.load_state_dict(state_dict, strict = True)
+
+    test_on_sample(model, dataset, False, output_dir_path, file_name_format, nb_sample = config.testing.nb_sample, device = config.misc.device)
 
     del model
     del dataset

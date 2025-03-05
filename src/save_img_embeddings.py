@@ -64,11 +64,11 @@ def save_embeddings(config : dict, dataset_path : str, checkpoint_path : str, is
     gc.collect()
 
 
-def compute_embeddings_histo_sam(config : dict, dataset_path : str, checkpoint_paths : list):
+def compute_embeddings_histo_sam(config : dict, dataset_path : str, checkpoint_paths : list, encoder_type : str = None):
     model = HistoSAM(
         model_type = config.sam.model_type,
         checkpoint_path = checkpoint_paths[0],
-        hist_encoder_type = config.encoder.type,
+        hist_encoder_type = config.encoder.type if encoder_type == None else encoder_type,
         hist_encoder_checkpoint_path = checkpoint_paths[1],
         not_use_sam_encoder = config.sam.not_use_sam_encoder,
         embedding_as_input = False,

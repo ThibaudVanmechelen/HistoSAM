@@ -378,11 +378,14 @@ def run_finetuning_histoSAM(training_dataset_path : str, validation_dataset_path
 
 
 def run_finetuning_testing_histoSAM(dataset_path : str, config_path : str, checkpoint_paths : list[str], output_dir_path : str, 
-                                    testing_name : str, use_dataset : list[bool], last_model_path : str = None):
+                                    testing_name : str, use_dataset : list[bool], last_model_path : str, encoder_type : str, deconv : bool):
     print("Loading the config...")
     config = load_config(config_path)
 
+    print("Computing the image embeddings for testing set...")
+    compute_embeddings_histo_sam(config, dataset_path, checkpoint_paths, encoder_type)
+
     print("Evaluating HistoSAM...")
-    scores = evaluate_histo_SAM_with_config(config, dataset_path, checkpoint_paths, use_dataset, last_model_path)
+    scores = evaluate_histo_SAM_with_config(config, dataset_path, checkpoint_paths, use_dataset, last_model_path, encoder_type, deconv)
 
     save_scores(scores, os.path.join(output_dir_path, f"scores_{testing_name}.json"), os.path.join(output_dir_path, f"avg_{testing_name}.json"))

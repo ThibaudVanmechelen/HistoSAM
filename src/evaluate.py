@@ -66,7 +66,7 @@ def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpo
     return scores
 
 
-def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint_paths : list[str], use_dataset : list[bool], model_weight_path : str):
+def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint_paths : list[str], use_dataset : list[bool], model_weight_path : str, encoder_type : str, deconv : bool):
     prompt_type = {
                 'points' : config.prompting_evaluation.points, 
                 'box' : config.prompting_evaluation.box, 
@@ -99,11 +99,11 @@ def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint
 
     model = HistoSAM(model_type = config.sam.model_type,
                     checkpoint_path = checkpoint_paths[0],
-                    hist_encoder_type = config.encoder.type,
+                    hist_encoder_type = encoder_type,
                     hist_encoder_checkpoint_path = checkpoint_paths[1],
                     not_use_sam_encoder = config.sam.not_use_sam_encoder,
                     embedding_as_input = config.prompting_evaluation.use_img_embeddings,
-                    up_sample_with_deconvolution = config.encoder.deconv,
+                    up_sample_with_deconvolution = deconv,
                     freeze_sam_img_encoder = True,
                     freeze_prompt_encoder = True,
                     freeze_mask_decoder = True,
@@ -112,14 +112,9 @@ def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint
     )
 
     if model_weight_path:
-        print("Loading the model weights...")
+        print(f"Loading the model weights from {model_weight_path}...")
         state_dict = torch.load(model_weight_path)
-        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict = False)
-
-        if missing_keys or unexpected_keys:
-            print(f"Warning: Missing keys: {missing_keys}, Unexpected keys: {unexpected_keys}")
-        else:
-            print("Model loaded successfully!")
+        model.load_state_dict(state_dict, strict = True)
 
     model.eval()
     scores = test_loop(model, dataloader, config.misc.device, config.prompting_evaluation.input_mask_eval, return_mean = False, 

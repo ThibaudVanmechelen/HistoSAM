@@ -1,0 +1,37 @@
+title = "Configuration to test HistoSAM with only the domain encoder"
+
+[prompting_evaluation]
+points = true
+box = true
+negative_points = true
+mask_prompt = true
+
+n_points = 5
+n_neg_points = 5
+points_near_center = 4
+random_box_shift = 20
+
+mask_prompt_type = 'loose_dilation' # 'truth', 'morphology', 'scribble', 'loose_dilation'
+negative_points_inside_box = true
+box_around_prompt_mask = false
+
+use_img_embeddings = true
+is_combined_embedding = false
+
+prompt_on_get = false
+
+batch_size = 32
+load_on_cpu = false
+
+input_mask_eval = false
+is_eval_post_processing = false
+do_post_process = false
+post_process_type = "standard"
+
+[sam]
+model_type = 'vit_b'
+not_use_sam_encoder = true
+input_size = 1024
+
+[misc]
+device = 'cuda'
