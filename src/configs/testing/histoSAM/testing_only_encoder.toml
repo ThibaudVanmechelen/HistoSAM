@@ -33,5 +33,7 @@ model_type = 'vit_b'
 not_use_sam_encoder = true
 input_size = 1024
 
+[encoder]
+
 [misc]
 device = 'cuda'

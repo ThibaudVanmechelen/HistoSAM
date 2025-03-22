@@ -112,7 +112,7 @@ def run_visualization_histoSAM(dataset_path : str, config_path : str, checkpoint
         state_dict = torch.load(last_model_path)
         model.load_state_dict(state_dict, strict = True)
 
-    test_on_sample(model, dataset, False, output_dir_path, file_name_format, nb_sample = config.testing.nb_sample, device = config.misc.device)
+    test_on_sample(model, dataset, False, output_dir_path, file_name_format, nb_sample = config.prompting_evaluation.nb_sample, device = config.misc.device)
 
     del model
     del dataset
@@ -152,7 +152,8 @@ def test_on_sample(model, dataset : SAMDataset, is_sam2 : bool, output_dir_path 
         original_mask = sample_mask_np
 
         if not is_sam2:
-            pred = model([sample_data], multimask_output = True, binary_mask_output = True) 
+            with torch.no_grad():
+                pred = model([sample_data], multimask_output = True, binary_mask_output = True) 
             pred = pred[0].cpu().numpy() # np.ndarray HxW
 
             prompts = {'point_coords': None, 'point_labels': None, 'boxes': None, 'mask_inputs': None}

@@ -11,6 +11,8 @@ from dataset_processing.dataset import SAMDataset
 from components.histo_encoder import get_histo_encoder
 from components.custom_fusion_sam import fusion_sam_model_registry
 from components.upsample import DeconvolutionUpSampler, InterpolationUpSampler
+from components.cross_attention_fusion import CrossAttentionFusionModule
+from components.attention_refinement_module import AttentionRefinementModule
 
 class HistoSAM(nn.Module):
     def __init__(self, 
@@ -21,6 +23,9 @@ class HistoSAM(nn.Module):
              not_use_sam_encoder : bool = False,
              embedding_as_input : bool = False,
              up_sample_with_deconvolution : bool = False,
+             fuse_with_attention : bool = False,
+             refine_with_attention : bool = False,
+             sam_weights_for_refinement : str = None,
              freeze_sam_img_encoder : bool = True,
              freeze_prompt_encoder : bool = False,
              freeze_mask_decoder : bool = False,
@@ -38,6 +43,8 @@ class HistoSAM(nn.Module):
         assert (hist_encoder_checkpoint_path is None) or (hist_encoder_type is not None), "Must specify the type of the hist_encoder."
         assert (hist_encoder_type is None) or (hist_encoder_checkpoint_path is not None), "Must specify the path of the hist_encoder."
 
+        assert (fuse_with_attention is False) or (refine_with_attention is False), "Impossible to use the hist encoder to both fuse and refine."
+
         self.model_type = model_type
         self.hist_encoder_type = hist_encoder_type
 
@@ -47,17 +54,29 @@ class HistoSAM(nn.Module):
         else:
             self.do_merge = True
 
-        if self.do_merge:
+        if not self.do_merge:
+            assert not fuse_with_attention, "fuse_with_attention must be False if only one encoder."
+            assert not refine_with_attention, "refine_with_attention must be False if only one encoder."
+
+        if self.do_merge and not refine_with_attention:
             self.model = fusion_sam_model_registry[model_type](checkpoint = checkpoint_path) # output shape: B x 64 x 64 x sam_embed_dim
         else:
             self.model = sam_model_registry[model_type](checkpoint = checkpoint_path)
+
+            if refine_with_attention and sam_weights_for_refinement:
+                print(f"Loading sam model weights from {sam_weights_for_refinement}")
+
+                state_dict = torch.load(sam_weights_for_refinement)
+                self.model.load_state_dict(state_dict, strict = True)
 
         self.model.to(device)
         self.hist_encoder = get_histo_encoder(hist_encoder_checkpoint_path, hist_encoder_type, device, False)
 
         self.not_use_sam_encoder = not_use_sam_encoder
         self.embedding_as_input = embedding_as_input
-        self.up_sample_with_deconvolution = up_sample_with_deconvolution 
+        self.up_sample_with_deconvolution = up_sample_with_deconvolution
+        self.fuse_with_attention = fuse_with_attention
+        self.refine_with_attention = refine_with_attention
 
         self.resolution = resolution
         self.return_iou = return_iou
@@ -76,19 +95,6 @@ class HistoSAM(nn.Module):
             for param in self.model.mask_decoder.parameters():
                 param.requires_grad = False
 
-        if self.up_sample_with_deconvolution:
-            self.upsample = DeconvolutionUpSampler(nb_patch = self.hist_encoder.model.patch_embed.num_patches, 
-                                                    embed_dim = self.hist_encoder.model.embed_dim, 
-                                                    output_size = 64) # output shape: B x 64 x 64 x embed_dim
-        
-        else:
-            self.upsample = InterpolationUpSampler(nb_patch = self.hist_encoder.model.patch_embed.num_patches,
-                                                    embed_dim = self.hist_encoder.model.embed_dim, 
-                                                    output_size = 64) # output shape: B x 64 x 64 x embed_dim
-
-        self.upsample.to(device)
-
-        out_chans = 256
         if self.model_type == 'vit_b':
             sam_embed_dim = 768
 
@@ -98,30 +104,66 @@ class HistoSAM(nn.Module):
         else:
             sam_embed_dim = 1280
 
-        if self.do_merge:
-            total_embed_dim = sam_embed_dim + self.hist_encoder.model.embed_dim
+        if self.fuse_with_attention:
+            self.fuse_module = CrossAttentionFusionModule(
+                query_dim = sam_embed_dim,
+                context_dim = self.hist_encoder.model.embed_dim                                    
+            )
+
+            self.fuse_module.to(device)
+
+        elif self.refine_with_attention:
+            self.refinement_module = AttentionRefinementModule(
+                mask_channels = 3,
+                hist_dim = self.hist_encoder.model.embed_dim
+            )
+
+            self.refinement_module.to(device)
+
+        elif self.up_sample_with_deconvolution:
+            self.upsample = DeconvolutionUpSampler(
+                nb_patch = self.hist_encoder.model.patch_embed.num_patches, 
+                embed_dim = self.hist_encoder.model.embed_dim, 
+                output_size = 64
+            ) # output shape: B x 64 x 64 x embed_dim
+
+            self.upsample.to(device)
+        
         else:
-            total_embed_dim = self.hist_encoder.model.embed_dim
+            self.upsample = InterpolationUpSampler(
+                nb_patch = self.hist_encoder.model.patch_embed.num_patches,
+                embed_dim = self.hist_encoder.model.embed_dim, 
+                output_size = 64
+            ) # output shape: B x 64 x 64 x embed_dim
 
-        self.neck = nn.Sequential(
-            nn.Conv2d(
-                total_embed_dim,
-                out_chans,
-                kernel_size = 1,
-                bias = False,
-            ),
-            LayerNorm2d(out_chans),
-            nn.Conv2d(
-                out_chans,
-                out_chans,
-                kernel_size = 3,
-                padding = 1,
-                bias = False,
-            ),
-            LayerNorm2d(out_chans),
-        )
+            self.upsample.to(device)
 
-        self.neck.to(device)
+        if self.refine_with_attention is False and self.fuse_with_attention is False:
+            out_chans = 256
+            if self.do_merge:
+                total_embed_dim = sam_embed_dim + self.hist_encoder.model.embed_dim
+            else:
+                total_embed_dim = self.hist_encoder.model.embed_dim
+
+            self.neck = nn.Sequential(
+                nn.Conv2d(
+                    total_embed_dim,
+                    out_chans,
+                    kernel_size = 1,
+                    bias = False,
+                ),
+                LayerNorm2d(out_chans),
+                nn.Conv2d(
+                    out_chans,
+                    out_chans,
+                    kernel_size = 3,
+                    padding = 1,
+                    bias = False,
+                ),
+                LayerNorm2d(out_chans),
+            )
+
+            self.neck.to(device)
 
     def forward(self, batched_input : List[Dict[str, Any]], multimask_output : bool = True, binary_mask_output: bool = False):
         if self.embedding_as_input and self.do_merge == False: # case 1: only hist_encoder is used
@@ -134,11 +176,20 @@ class HistoSAM(nn.Module):
             input_images = [x["image"] for x in batched_input] # list of dict {"sam": tensor (64, 64, sam_embed_dim), "encoder": tensor (number_patches x encoder_dim)}
 
             sam_embeddings = torch.stack([d["sam"] for d in input_images], dim = 0) # Shape: B x 64 x 64 x sam_embed_dim
-            hist_embeddings = torch.stack([d["encoder"] for d in input_images], dim = 0) # Shape: B x number_patches x encoder_dim
+            hist_image_embeddings = torch.stack([d["encoder"] for d in input_images], dim = 0) # Shape: B x number_patches x encoder_dim
 
-            upsampled_hist_embeddings = self.upsample(hist_embeddings) # Shape: B x 64 x 64 x encoder_dim
-            concat_embeddings = torch.cat((sam_embeddings, upsampled_hist_embeddings), dim = -1) # Shape: B x 64 x 64 x (sam_embed_dim + encoder_dim)
-            image_embeddings = self.neck(concat_embeddings.permute(0, 3, 1, 2)) # Shape: B x 256 x 64 x 64
+            if self.refine_with_attention:
+                image_embeddings = sam_embeddings # Shape: B x 256 x 64 x 64 because used original SAM here with its neck
+                encoder_embeddings = hist_image_embeddings # Shape: B x number_patches x encoder_dim
+
+            elif self.fuse_with_attention:
+                B, H, W, sam_dim = sam_embeddings.shape
+                image_embeddings = self.fuse_module(query = sam_embeddings.reshape(B, H * W, sam_dim), context = hist_image_embeddings) # Shape: B x 256 x 64 x 64
+
+            else:
+                upsampled_hist_embeddings = self.upsample(hist_image_embeddings) # Shape: B x 64 x 64 x encoder_dim
+                concat_embeddings = torch.cat((sam_embeddings, upsampled_hist_embeddings), dim = -1) # Shape: B x 64 x 64 x (sam_embed_dim + encoder_dim)
+                image_embeddings = self.neck(concat_embeddings.permute(0, 3, 1, 2)) # Shape: B x 256 x 64 x 64
 
         elif self.do_merge == True: # case 3: both encoder are used but without embeddings as input
             input_images_sam = torch.stack([self.model.preprocess(x["image"]) for x in batched_input], dim = 0) # Shape: BxCxHxW
@@ -148,9 +199,18 @@ class HistoSAM(nn.Module):
                 image_embeddings = self.model.image_encoder(input_images_sam) # Shape: B x 64 x 64 x sam_embed_dim
                 hist_image_embeddings = self.hist_encoder(input_images_encoder) # Shape: B x number_patches x encoder_dim
 
-            upsampled_hist_embeddings = self.upsample(hist_image_embeddings) # Shape: B x 64 x 64 x encoder_dim
-            concat_embeddings = torch.cat((image_embeddings, upsampled_hist_embeddings), dim = -1) # Shape: B x 64 x 64 x (sam_embed_dim + encoder_dim)
-            image_embeddings = self.neck(concat_embeddings.permute(0, 3, 1, 2)) # Shape: B x 256 x 64 x 64
+            if self.refine_with_attention:
+                encoder_embeddings = hist_image_embeddings # Shape: B x number_patches x encoder_dim
+                # image_embeddings has shape B x 256 x 64 x 64
+
+            elif self.fuse_with_attention:
+                B, H, W, sam_dim = image_embeddings.shape
+                image_embeddings = self.fuse_module(query = image_embeddings.reshape(B, H * W, sam_dim), context = hist_image_embeddings) # Shape: B x 256 x 64 x 64
+
+            else:
+                upsampled_hist_embeddings = self.upsample(hist_image_embeddings) # Shape: B x 64 x 64 x encoder_dim
+                concat_embeddings = torch.cat((image_embeddings, upsampled_hist_embeddings), dim = -1) # Shape: B x 64 x 64 x (sam_embed_dim + encoder_dim)
+                image_embeddings = self.neck(concat_embeddings.permute(0, 3, 1, 2)) # Shape: B x 256 x 64 x 64
 
         else: # case 4: only hist_encoder is used but without embeddings as input
             input_images_encoder = self.hist_encoder.preprocess([x["image"] for x in batched_input]) # Shape: BxCxHxW
@@ -184,6 +244,9 @@ class HistoSAM(nn.Module):
                 dense_prompt_embeddings = dense_embeddings,
                 multimask_output = multimask_output,
             )
+
+            if self.refine_with_attention:
+                low_res_masks = self.refinement_module(low_res_masks, encoder_embeddings[i].unsqueeze(0))
 
             masks = self.model.postprocess_masks(
                 low_res_masks,
@@ -230,9 +293,9 @@ class HistoSAM(nn.Module):
         self.eval()
 
         with torch.no_grad():
-            for i, (data, _, _) in tqdm(enumerate(dataset), total = len(dataset), desc = 'Saving img embeddings'):
+            for j, (data, _, _) in tqdm(enumerate(dataset), total = len(dataset), desc = 'Saving img embeddings'):
                 img_embedding = self.get_image_embedding(data)
-                img_dir = os.path.dirname(dataset.images[i])
+                img_dir = os.path.dirname(dataset.images[j])
 
                 img_save_path = os.path.join(img_dir, "img_embedding.pt")
                 torch.save(img_embedding, img_save_path)

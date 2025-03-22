@@ -140,7 +140,7 @@ def delete_sample(dataset_path : str, i : int, a : int):
     os.rmdir(dataset_path + f'{i}_{a}')
 
 
-def download_images(config : dict, root : str):
+def download_images(config : dict, root : str, do_filter_terms : bool = False):
     """Downloads all images from a Cytomine projects around annotations.
     Requires a config dictionary (see config.toml and load_config function).
     Must be executed unside a with Cytomine() statement."""
@@ -148,6 +148,9 @@ def download_images(config : dict, root : str):
 
     dataset_path = os.path.join(root, config.cytomine.dataset_path)
     input_size = config.sam.input_size
+
+    if do_filter_terms:
+        valid_terms = [int(term) for term in config['cytomine']['valid_terms']]
 
     nb_img = len(img_collections)
     print("Cropping and downloading images")
@@ -158,8 +161,11 @@ def download_images(config : dict, root : str):
 
         annotations.project = config.cytomine.project_id
         annotations.users = config.cytomine.annotation_users_id
-    
+
         annotations.image = img.id
+
+        if do_filter_terms:
+            annotations.terms = valid_terms
 
         annotations.showWKT = True
         annotations.showMeta = True
@@ -170,15 +176,15 @@ def download_images(config : dict, root : str):
         for a, annotation in enumerate(annotations):
             x, y, width, height = get_roi_around_annotation(img, annotation, config)
 
-            img.window(x, y, width, height, 
-                       dest_pattern = dataset_path + f'{i}_{a}/img', 
-                       annotations = [annotation.id], 
+            img.window(x, y, width, height,
+                       dest_pattern = dataset_path + f'{i}_{a}/img',
+                       annotations = [annotation.id],
                        max_size = 1024)
 
-            img.window(x, y, width, height, 
-                       mask = True, 
-                       dest_pattern = dataset_path + f'{i}_{a}/mask', 
-                       annotations = [annotation.id], 
+            img.window(x, y, width, height,
+                       mask = True,
+                       dest_pattern = dataset_path + f'{i}_{a}/mask',
+                       annotations = [annotation.id],
                        max_size = 1024)
 
             if len(os.listdir(dataset_path + f'{i}_{a}')) == 0:

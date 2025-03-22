@@ -479,7 +479,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                  random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, neg_points_inside_box : bool = False, 
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
                  box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False,
-                 generate_prompt_on_get : bool = False, is_combined_embedding : bool = False):
+                 generate_prompt_on_get : bool = False, is_combined_embedding : bool = False, is_embedding_saving : bool = False):
         """Initialize SAMDataset class.
         Can only be initialized from files obtained from save_img_embeddings.py script.
         """
@@ -490,6 +490,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         self.is_combined_embedding = is_combined_embedding
         self.load_on_cpu = load_on_cpu
         self.generate_prompt_on_get = generate_prompt_on_get
+        self.is_embedding_saving = is_embedding_saving
 
         self.images = []
         self.masks = []
@@ -760,12 +761,17 @@ class SamDatasetFromFiles(AbstractSAMDataset):
 
         if self.use_img_embeddings:
             return to_dict(img_embedding, prompt, use_img_embeddings = self.use_img_embeddings, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
-        
+    
         if self.transform:
             img, mask = self.transform(img, mask)
 
         if self.to_dict:
-            return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
+            if self.is_embedding_saving:
+                prompt_copy = deepcopy(prompt)
+                return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0), prompt_copy
+
+            else:
+                return to_dict(img, prompt, is_sam2_prompt = self.is_sam2_prompt), np.where(mask > 0, 1, 0)
         
         return img, np.where(mask > 0, 1, 0), prompt
     

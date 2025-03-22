@@ -281,7 +281,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                         high_res_features = high_res_features,
                     )
 
-                    prediction_masks = self._transforms.postprocess_masks(low_res_masks, self._orig_hw[img_idx]) # Shape: (B, C, H, W), here B is just 1 TODO check this dim
+                    prediction_masks = self._transforms.postprocess_masks(low_res_masks, self._orig_hw[img_idx]) # Shape: (B, C, H, W), here B is just 1 
                     prediction_masks = prediction_masks.squeeze(0) # Shape: (C, H, W)
                     iou_predictions = iou_predictions.squeeze(0) # Shape: C
 
@@ -293,7 +293,7 @@ class TrainableSAM2(SAM2ImagePredictor):
                     batch_best_ious.append(prediction_iou)
 
                 pred_masks = torch.stack(batch_best_pred) # Shape: (N, H, W)
-                pred_ious = torch.stack(batch_best_ious) # Shape: (N, 1) TODO check this 2 dims
+                pred_ious = torch.stack(batch_best_ious) # Shape: (N, 1) 
 
                 if is_original_loss:
                     loss, loss_parts = loss_fn(pred_masks.float(), mask.float(), pred_ious.float())
@@ -485,7 +485,7 @@ class TrainableSAM2(SAM2ImagePredictor):
 
                 most_probable_mask_idx = pred_scores.argmax(dim = 1)  # Shape: (N)
                 selected_masks = pred_masks[torch.arange(pred_masks.size(0)), most_probable_mask_idx, :, :]  # Shape: (N, H, W), extracting the masks
-                selected_scores = pred_scores[torch.arange(pred_scores.size(0)), most_probable_mask_idx].unsqueeze(1) # Shape: (N, 1) TODO check this dimension
+                selected_scores = pred_scores[torch.arange(pred_scores.size(0)), most_probable_mask_idx].unsqueeze(1) # Shape: (N, 1)
 
                 if is_original_loss:
                     loss, loss_parts = loss_fn(selected_masks.float(), mask.float(), selected_scores.float())

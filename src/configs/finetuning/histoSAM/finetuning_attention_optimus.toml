@@ -1,6 +1,6 @@
-title = "Configuration to test HistoSAM with both encoders"
+title = "Configuration to finetune HistoSam with the h-optimus-0 encoder and attention fuse module"
 
-[prompting_evaluation]
+[training]
 points = true
 box = true
 negative_points = true
@@ -21,12 +21,16 @@ is_combined_embedding = true
 prompt_on_get = false
 
 batch_size = 32
+lr = 1e-5
+epochs = 30
+train_from_last_checkpoint = false
+last_checkpoint_path = ''
+last_model_path = ''
+model_save_dir = '/content/drive/MyDrive/TFE/results/finetuning/histosam/sam_with_optimus_attention/'
 load_on_cpu = false
 
-input_mask_eval = false
-is_eval_post_processing = false
-do_post_process = false
-post_process_type = "standard"
+[validation]
+frequency = 1
 
 [sam]
 model_type = 'vit_b'
@@ -34,6 +38,11 @@ not_use_sam_encoder = false
 input_size = 1024
 
 [encoder]
+type = 'h-optimus-0'
+deconv = false
+fuse_with_attention = true
 
 [misc]
 device = 'cuda'
+wandb = true
+project_name = 'Finetuning_SAM_WITH_OPTIMUS_ATTENTION'

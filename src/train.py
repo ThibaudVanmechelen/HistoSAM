@@ -109,6 +109,15 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
 
 
 def train_histo_sam_with_config(config: dict, checkpoint_paths : list[str], training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]) -> dict:
+    f_w_a = config.encoder.get("fuse_with_attention", False)
+    r_w_a = config.encoder.get("refine_with_attention", False)
+
+    sam_weights_for_refinement = config.encoder.get("sam_weights_for_refinement", None) 
+
+    print(f"Fusing with attention: {f_w_a}")
+    print(f"Refining with attention: {r_w_a}")   
+    print(f"Weights: {sam_weights_for_refinement}")
+
     model = HistoSAM(model_type = config.sam.model_type,
                      checkpoint_path = checkpoint_paths[0],
                      hist_encoder_type = config.encoder.type,
@@ -117,10 +126,13 @@ def train_histo_sam_with_config(config: dict, checkpoint_paths : list[str], trai
                      embedding_as_input = config.training.use_img_embeddings,
                      up_sample_with_deconvolution = config.encoder.deconv,
                      freeze_sam_img_encoder = True,
-                     freeze_prompt_encoder = False,
-                     freeze_mask_decoder = False,
+                     freeze_prompt_encoder = False if sam_weights_for_refinement is None else True,
+                     freeze_mask_decoder = False if sam_weights_for_refinement is None else True,
                      return_iou = True,
-                     device = config.misc.device                  
+                     device = config.misc.device,
+                     fuse_with_attention = f_w_a,
+                     refine_with_attention = r_w_a,
+                     sam_weights_for_refinement = sam_weights_for_refinement        
     )
 
     nb_params = sum(p.numel() for p in model.parameters())
@@ -133,8 +145,16 @@ def train_histo_sam_with_config(config: dict, checkpoint_paths : list[str], trai
     print(f"SAM: mask decoder parameters: {sum(p.numel() for p in model.model.mask_decoder.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.model.mask_decoder.parameters() if p.requires_grad) / 1e6:.2f}M")
 
     print(f"Encoder parameters: {sum(p.numel() for p in model.hist_encoder.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.hist_encoder.parameters() if p.requires_grad) / 1e6:.2f}M")
-    print(f"UpSample parameters: {sum(p.numel() for p in model.upsample.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.upsample.parameters() if p.requires_grad) / 1e6:.2f}M")
-    print(f"Neck parameters: {sum(p.numel() for p in model.neck.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.neck.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+    if f_w_a:
+        print(f"Fuse module parameters: {sum(p.numel() for p in model.fuse_module.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.fuse_module.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+    elif r_w_a:
+        print(f"Refinement module parameters: {sum(p.numel() for p in model.refinement_module.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.refinement_module.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+    else:
+        print(f"UpSample parameters: {sum(p.numel() for p in model.upsample.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.upsample.parameters() if p.requires_grad) / 1e6:.2f}M")
+        print(f"Neck parameters: {sum(p.numel() for p in model.neck.parameters()) / 1e6:.2f}M, trainable: {sum(p.numel() for p in model.neck.parameters() if p.requires_grad) / 1e6:.2f}M")
 
     prompt_type = {
         'points' : config.training.points, 

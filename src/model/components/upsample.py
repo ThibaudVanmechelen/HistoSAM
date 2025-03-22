@@ -14,8 +14,8 @@ class InterpolationUpSampler(nn.Module):
         assert self.input_size in [14, 16], "input_size must be either 14 or 16 (nb_patches must be 196 or 256) !"
 
         self.upsample = nn.Upsample(size = (output_size, output_size), mode = "bilinear", align_corners = False)
-        self.depthwise = nn.Conv2d(embed_dim, embed_dim, kernel_size = 3, stride = 1, padding = 1, groups = embed_dim)
-        self.pointwise = nn.Conv2d(embed_dim, embed_dim, kernel_size = 1)
+        self.depthwise = nn.Conv2d(embed_dim, embed_dim, kernel_size = 3, stride = 1, padding = 1, groups = embed_dim) # per channel
+        self.pointwise = nn.Conv2d(embed_dim, embed_dim, kernel_size = 1) # across channel
 
     def forward(self, x):
         B, _, embed_dim = x.shape

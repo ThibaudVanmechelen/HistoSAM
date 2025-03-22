@@ -66,7 +66,9 @@ def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpo
     return scores
 
 
-def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint_paths : list[str], use_dataset : list[bool], model_weight_path : str, encoder_type : str, deconv : bool):
+def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint_paths : list[str], use_dataset : list[bool], model_weight_path : str, 
+                                   encoder_type : str, deconv : bool, fuse_with_attention : bool = False, refine_with_attention : bool = False,
+                                   sam_weights_for_refinement : str = None):
     prompt_type = {
                 'points' : config.prompting_evaluation.points, 
                 'box' : config.prompting_evaluation.box, 
@@ -108,7 +110,10 @@ def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint
                     freeze_prompt_encoder = True,
                     freeze_mask_decoder = True,
                     return_iou = True,
-                    device = config.misc.device                  
+                    device = config.misc.device,
+                    fuse_with_attention = fuse_with_attention,
+                    refine_with_attention = refine_with_attention,
+                    sam_weights_for_refinement = sam_weights_for_refinement                
     )
 
     if model_weight_path:

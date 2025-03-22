@@ -149,7 +149,7 @@ class TrainableSam(Sam):
             return pred, iou_second_pass
 
 
-def load_model(model_path : str, model_type : str = 'vit_b', img_embeddings_as_input : bool = False, return_iou : bool = False,) -> TrainableSam:
+def load_model(model_path : str, model_type : str = 'vit_b', img_embeddings_as_input : bool = False, return_iou : bool = False) -> TrainableSam:
     """Function to load a trained model. The function returns a torch.nn.Module model.
     model_path: str, path to the model
     model_type: str in ["vit_b", "vit_h", "vit_l"], type of the model to load. Default: "vit_b" """

@@ -1,0 +1,13 @@
+title = "Scraper for CHU-ANAPATH"
+
+[cytomine]
+dataset_path = "datasets/CHU_ANAPATH/"
+project_id = '24796414'
+annotation_users_id = ['24768144']
+valid_terms = ['24915525', '25090697', '24804697', '24996844', '25635845', '24804715', '25635608', '25090719', '25090734']
+random_shift = 0
+random_state = 42
+zoom_out_factor = 2.0
+
+[sam]
+input_size = 1024
