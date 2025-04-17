@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 # This code is basically a copy of https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/build_sam.py
+# It has just been modified so that it uses 'FusionImageEncoderViT' instead of the standard image encoder used in SAM.
 
 import torch
 

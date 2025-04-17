@@ -16,6 +16,13 @@ class TrainableSam(Sam):
     Only the forward method differs slightly"""
 
     def __init__(self, img_embeddings_as_input : bool = False, return_iou : bool = False, *args, **kwargs):
+        """
+        Constructor
+
+        Args:
+            img_embeddings_as_input (bool, optional): whether the model receives images or directly embeddings. Defaults to False.
+            return_iou (bool, optional): whether the model must return the predicted iou aswell. Defaults to False.
+        """
         super().__init__(*args, **kwargs)
 
         self.img_embeddings_as_input = img_embeddings_as_input
@@ -32,7 +39,8 @@ class TrainableSam(Sam):
             dictionary with the following keys. A prompt key can be
             excluded if it is not present.
               'image': The image as a torch tensor in 3xHxW format,
-                already transformed for input to the model.
+                already transformed for input to the model, can also be an embedding here
+                depending on the init.
               'original_size': (tuple(int, int)) The original size of
                 the image before transformation, as (H, W).
               'point_coords': (torch.Tensor) Batched point prompts for
@@ -46,14 +54,14 @@ class TrainableSam(Sam):
                 in the form Bx1xHxW.
           multimask_output (bool): Whether the model should predict multiple
             disambiguating masks, or return a single mask.
-          img_embeddings_as_input (bool): If True, the model expects the
-            input to be image embeddings instead of raw images. Default: False.
+          binary_mask_output (bool): Whether the model should output logits or
+          binary masks (TRUE).
 
         Returns:
             (torch.Tensor): Batched binary mask predictions,
               with shape BxCxHxW, where B is the number of input prompts,
               C is determined by multimask_output, and (H, W) is the
-              original size of the image.
+              original size of the image, and the ious if required.
 
         What changes in this modified version regarding to the original SAM code is the fact that image embeddings can be reused instead of
         computing them everytime in order to speed up training. Moreover, the outputs is not a dict anymore, it is just the batch of highest iou
@@ -124,6 +132,17 @@ class TrainableSam(Sam):
             return sum(p.numel() for p in self.mask_decoder.parameters()) + sum(p.numel() for p in self.prompt_encoder.parameters())
         
     def predict_with_recirculation(self, batched_input : List[Dict[str, Any]], multimask_output: bool, binary_mask_output: bool = False):
+        """
+        Function to predict mask, by predicting a first time, then feeding back the output mask to SAM to try to improve performances.
+
+        Args:
+            batched_input (List[Dict[str, Any]]): A list over input images, each a dictionary with the following keys
+            multimask_output (bool): Whether the model should predict multiple disambiguating masks
+            binary_mask_output (bool, optional): Whether the model should output logits or binary masks (TRUE).
+
+        Returns:
+            the predicted mask
+        """
         if not self.return_iou:
             pred = self.forward(batched_input, multimask_output, True)
 
@@ -266,8 +285,3 @@ def _build_sam(
             state_dict = torch.load(f)
         sam.load_state_dict(state_dict)
     return sam
-
-
-if __name__ == '__main__':
-    model = load_model('../../checkpoints/sam_vit_b_01ec64.pth', 'vit_b')
-    print(model)

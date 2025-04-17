@@ -209,19 +209,3 @@ def download_images(config : dict, root : str, do_filter_terms : bool = False):
                     resized_mask = F.resize(F.to_pil_image(mask_array), (input_size, input_size), interpolation = InterpolationMode.NEAREST)
                     resized_mask.save(dataset_path + f'{i}_{a}/mask.jpg')
 
-
-if __name__ == '__main__':
-    parser = ArgumentParser(description = 'Download cropped images around annotations from a Cytomine project.')
-    parser.add_argument('--config', required = True, type = str, help = 'Path to the configuration file. Default: ../config.toml', default = '../config.toml')
-    parser.add_argument('--keys', required = True, type = str, help = 'Path to the keys.toml file. Default: ../keys.toml', default = '../keys.toml')
-    parser.add_argument('--root', required = True, type = str, help = 'Root directory for the dataset. Default: current working directory.', default = os.getcwd())
-
-    args = parser.parse_args()
-
-    keys = load_config(args.keys)
-    config = load_config(args.config)
-
-    root = args.root
-
-    with Cytomine(keys['host'], keys['public_key'], keys['private_key'], verbose = logging.ERROR) as cytomine:
-        download_images(config, root)

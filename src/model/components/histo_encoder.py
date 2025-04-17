@@ -10,6 +10,17 @@ from typing import Tuple
 class HistEncoder(nn.Module):
     "Wrapper class for the different histopathology encoders."
     def __init__(self, model, img_res : Tuple[int, int], norm_mean : float, norm_std : float, type_ : str, device : str):
+        """
+        Constructor.
+
+        Args:
+            model: the encoder model.
+            img_res (Tuple[int, int]): the resolution of the image for that particular encoder.
+            norm_mean (float): the mean for normalizing with that encoder.
+            norm_std (float): the std for normalizing with that encoder.
+            type_ (str): name of that encoder.
+            device (str): the device where the encoder is located.
+        """
         super().__init__()
 
         self.model = model
@@ -25,6 +36,15 @@ class HistEncoder(nn.Module):
             param.requires_grad = False
 
     def preprocess(self, images : list):
+        """
+        Function to preprocess the image for the encoder.
+
+        Args:
+            images (list): list of images to preprocess.
+
+        Returns:
+            (Tensor): preprocessed images.
+        """
         processed_images = []
 
         for img in images:
@@ -58,6 +78,15 @@ class HistEncoder(nn.Module):
         return batch
 
     def forward(self, x : torch.Tensor):
+        """
+        Forward function for the encoder.
+
+        Args:
+            x (torch.Tensor): input
+
+        Returns:
+            (Tensor): the prediction.
+        """
         with torch.inference_mode():
             features = self.model.forward_features(x)
 
@@ -65,6 +94,18 @@ class HistEncoder(nn.Module):
 
 
 def get_histo_encoder(weight_path : str, type_ : str, device : str = 'cuda', verbose : bool = False):
+    """
+    Function to get an histo encoder model.
+
+    Args:
+        weight_path (str): path to the weights.
+        type_ (str): type of the model, must be in ['uni', 'uni-2h', 'h-optimus-0'].
+        device (str, optional): device where to put the encoder. Defaults to 'cuda'.
+        verbose (bool, optional): whether to print additional info. Defaults to False.
+
+    Returns:
+        the model
+    """
     assert type_ in ['uni', 'uni-2h', 'h-optimus-0'], f"Type must be 'uni','uni-2h or 'h-optimus-0', got: {type_}."
 
     if type_ == 'uni':
@@ -111,6 +152,18 @@ def get_histo_encoder(weight_path : str, type_ : str, device : str = 'cuda', ver
     return HistEncoder(model, img_res, mean_, std_, type_, device).eval()
 
 def load_weights(model, weight_path : str, device : str = 'cuda', verbose : bool = False):
+    """
+    Function to load weights for the encoder.
+
+    Args:
+        model: the model
+        weight_path (str): path to the weights.
+        device (str, optional): device where to put the encoder. Defaults to 'cuda'.
+        verbose (bool, optional): whether to print additional info. Defaults to False.
+
+    Returns:
+        the model with loaded weights.
+    """
     state_dict = torch.load(weight_path, map_location = device)
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict = True)
 

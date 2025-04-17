@@ -10,7 +10,16 @@ from model.histo_sam import HistoSAM
 from tqdm import tqdm
 
 def save_embeddings(config : dict, dataset_path : str, checkpoint_path : str, is_sam2 : bool, save_prompt : bool):
-    """Save img embeddings in file for further use. Allows to train SAM model without touching its image encoder"""
+    """
+    Function to save img embeddings in file for further use. Allows to train SAM model without touching its image encoder
+
+    Args:
+        config (dict): the config.
+        dataset_path (str): path to the dataset.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether we compute the embeddings for sam or sam2.
+        save_prompt (bool): whether we also save the prompts or not.
+    """
     if not is_sam2:
         model = load_model(checkpoint_path, config.sam.model_type).to(device = config.misc.device)
     else:
@@ -65,6 +74,14 @@ def save_embeddings(config : dict, dataset_path : str, checkpoint_path : str, is
 
 
 def save_prompts(config : dict, dataset_path : str, is_sam2 : bool):
+    """
+    Function to save only the prompts for training.
+
+    Args:
+        config (dict): the config.
+        dataset_path (str): path to the dataset.
+        is_sam2 (bool): whether we compute the embeddings for sam or sam2.
+    """
     dataset = SamDatasetFromFiles(
         root = dataset_path,
         prompt_type = {'points' : True, 'box' : True, 'neg_points' : True, 'mask' : True},
@@ -96,7 +113,17 @@ def save_prompts(config : dict, dataset_path : str, is_sam2 : bool):
 
 def compute_embeddings_histo_sam(config : dict, dataset_path : str, checkpoint_paths : list, encoder_type : str = None, 
                                  r_w_a = None, sam_weights_for_refinement = None):
+    """
+    Function to compute the embeddings for histoSAM.
 
+    Args:
+        config (dict): the config.
+        dataset_path (str): path to the dataset.
+        checkpoint_paths (list[str]): list of checkpoints for the model. Must have size 2, 0 = SAM, 1 = Histo encoder
+        encoder_type (str, optional): type of the encoder. Defaults to None.
+        r_w_a (optional): whether to use refine with attention or not. Defaults to None.
+        sam_weights_for_refinement (optional): path to the weights if we use refine with attention. Defaults to None.
+    """
     r_w_a = config.encoder.get("refine_with_attention", False) if r_w_a is None else r_w_a
     sam_weights_for_refinement = config.encoder.get("sam_weights_for_refinement", None) if sam_weights_for_refinement is None else sam_weights_for_refinement
 
@@ -143,6 +170,12 @@ def compute_embeddings_histo_sam(config : dict, dataset_path : str, checkpoint_p
 
 
 def remove_pt_files(dataset_path):
+    """
+    Function to remove the .pt files that were saved in the dataset.
+
+    Args:
+        dataset_path (str): path to the dataset where we remove the files.
+    """
     pt_files = {"prompt.pt", "img_embedding.pt", "sam2_img_embedding.pt"}
 
     listdir_ = os.listdir(dataset_path)

@@ -199,6 +199,7 @@ class AbstractSAMDataset(Dataset, ABC):
         raise ValueError('mask_prompt_type must be truth, morphology, loose_dilation or scribble')
     
     def _get_mask_morphology(self, mask : np.ndarray) -> np.ndarray:
+        """Get a mask dilated from the ground truth mask."""
         n = 40
         kernel = getStructuringElement(MORPH_ELLIPSE, (n, n))
 
@@ -231,6 +232,7 @@ class AbstractSAMDataset(Dataset, ABC):
         return dilate(scribble_mask, kernel=kernel)
     
     def _get_mask_loose_dilation(self, mask : np.ndarray, looseness : int = 20, noise_level : int = 20, iterations : int = 1) -> np.ndarray:
+        """Get a mask with a loose dilation strategy, by adding noise to the contour, applying convexHull and then dilating the mask."""
         mask_ = np.where(mask > 0, 1, 0).astype(np.uint8)  # converting mask to binary (0 and 1)
         new_mask = np.zeros_like(mask_, dtype = np.uint8)
         
@@ -286,11 +288,13 @@ class SAMDataset(AbstractSAMDataset):
         verbose: bool, if True, print progress messages
         random_state: int, random state for reproducibility
         to_dict: bool, if True, the __getitem__ method will return a dictionary with the image, the prompt and the mask. If False, it will return the image, the mask and the prompt.
+        is_sam2_prompt: whether the prompt must be formatted for sam or sam2
         neg_points_inside_box: bool, if True, negative points will be inside the bounding box of the mask
         points_near_center: float, if greater than 0, points will be more likely to be near the center of the mask
         random_box_shift: int, if greater than 0, the bounding box corners will be shifted randomly by a value between -random_box_shift and random_box_shift
         mask_prompt_type: str, type of mask to use for automatic annotation. Can be 'truth' or 'morphology' or 'scribble' or 'loose_dilation'. Default is 'truth'.
         box_around_mask: bool, if True, the box will be around the input mask.
+        is_embedding_saving: whether the dataset is only used to save the embeddings (in order to get both image and prompts embeddings at the same time)
         '''
         self.root = root
         self.transform = transform
@@ -369,11 +373,11 @@ class AugmentedSamDataset(SAMDataset):
 
     def __init__(self, root : str, use_img_embeddings : bool = True,
                  n_points : int = 1, n_neg_points : int = 1, zoom_out : float = 1.0, verbose : bool = False, 
-                 random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, random_box_shift : int = 20, mask_prompt_type : str = 'truth',
+                 random_state : int = None, to_dict : bool = True, is_sam2_prompt : bool = False, 
+                 random_box_shift : int = 20, mask_prompt_type : str = 'truth',
                  load_on_cpu : bool = False, filter_files : callable = None):
         '''Initialize SAMDataset class.
         root: str, path to the dataset directory
-        transform: callable, transform to apply to the images and masks
         use_img_embeddings: bool, if True, the model will use image embeddings instead of the images
         n_points: int, number of points to use for automatic annotation if prompt is 'points'.
         n_neg_points: int, number of negative points to use for automatic annotation if prompt is 'neg_points'.
@@ -381,9 +385,11 @@ class AugmentedSamDataset(SAMDataset):
         verbose: bool, if True, print progress messages
         random_state: int, random state for reproducibility
         to_dict: bool, if True, the __getitem__ method will return a dictionary with the image, the prompt and the mask. If False, it will return the image, the mask and the prompt.
+        is_sam2_prompt: whether the prompt must be formatted for sam or sam2        
         random_box_shift: int, if greater than 0, the bounding box corners will be shifted randomly by a value between -random_box_shift and random_box_shift
         mask_prompt_type: str, type of mask to use for automatic annotation. Can be 'truth' or 'morphology' or 'scribble' or 'loose_dilation'. Default is 'truth'.
         load_on_cpu: bool, if True, the entire dataset will be loaded on the CPU RAM. Data loading will be faster but will consume more memory. Default: False
+        filter_files: callable, function to filter the files from the dataset.
         '''
         prompt_type = {'points':False, 'box':False, 'neg_points':False, 'mask':False}
         self.filter_files = filter_files
@@ -480,9 +486,33 @@ class SamDatasetFromFiles(AbstractSAMDataset):
                  points_near_center : float = -1, random_box_shift : int = 0, mask_prompt_type : str = 'truth', 
                  box_around_mask : bool = False, filter_files : callable = None, load_on_cpu : bool = False,
                  generate_prompt_on_get : bool = False, is_combined_embedding : bool = False, is_embedding_saving : bool = False):
-        """Initialize SAMDataset class.
-        Can only be initialized from files obtained from save_img_embeddings.py script.
         """
+        Constructor of the SamDatasetFromFiles. It is highly adviced to use this dataset when finetuning.
+
+        Args:
+            root (str): path to the dataset directory
+            transform (callable, optional): transform function for data augmentation on the images. Defaults to None.
+            use_img_embeddings (bool, optional): if True, the model will use image embeddings instead of the images. Defaults to False.
+            prompt_type (dict, optional): prompt types to consider. Defaults to {'points':False, 'box': False, 'neg_points':False, 'mask':False}.
+            n_points (int, optional): number of points to use for automatic annotation if prompt is 'points'. Defaults to 1.
+            n_neg_points (int, optional): number of negative points to use for automatic annotation if prompt is 'neg_points'. Defaults to 1.
+            zoom_out (float, optional): factor to zoom out the bounding box. Add a margin around the mask. Defaults to 1.0.
+            verbose (bool, optional): if True, print progress messages. Defaults to False.
+            random_state (int, optional): random state for reproducibility. Defaults to None.
+            to_dict (bool, optional): if True, the __getitem__ method will return a dictionary with the image, the prompt and the mask. 
+                                    If False, it will return the image, the mask and the prompt. Defaults to True.
+            is_sam2_prompt (bool, optional): whether the prompt must be formatted for sam or sam2. Defaults to False.
+            neg_points_inside_box (bool, optional): if True, negative points will be inside the bounding box of the mask. Defaults to False.
+            points_near_center (float, optional): if greater than 0, points will be more likely to be near the center of the mask. Defaults to -1.
+            random_box_shift (int, optional): if greater than 0, the bounding box corners will be shifted randomly by a value between -random_box_shift and random_box_shift. Defaults to 0.
+            mask_prompt_type (str, optional): type of mask to use for automatic annotation. Can be 'truth' or 'morphology' or 'scribble' or 'loose_dilation'. Default is 'truth'.
+            box_around_mask (bool, optional): if True, the box will be around the input mask. Defaults to False.
+            filter_files (callable, optional): callable, function to filter the files from the dataset. Defaults to None.
+            load_on_cpu (bool, optional): if True, the entire dataset will be loaded on the CPU RAM. Data loading will be faster but will consume more memory. Defaults to False.
+            generate_prompt_on_get (bool, optional): if this is True, the prompt will be generated randomly when calling get_item instead of preloaded. Defaults to False.
+            is_combined_embedding (bool, optional): used for HistoSAM to combine the embeddings of the 2 encoders. Defaults to False.
+            is_embedding_saving (bool, optional): whether the dataset is only used to save the embeddings (in order to get both image and prompts embeddings at the same time). Defaults to False.
+        """    
         print('Creating dataset...')
         self.root = root
         self.transform = transform
@@ -553,6 +583,16 @@ class SamDatasetFromFiles(AbstractSAMDataset):
             print('Done!')
 
     def select_combinations(self, prompt_type : dict, combination_list : dict):
+        """
+        Function to select the prompt combinations to be considered during training.
+
+        Args:
+            prompt_type (dict): the prompt types that need to be considered.
+            combination_list (dict): dict of all possible combinations.
+
+        Returns:
+            list of prompt combinations to consider.
+        """
         active_prompts = [key for key, value in prompt_type.items() if value]
         nb_active = len(active_prompts)
 
@@ -776,7 +816,7 @@ class SamDatasetFromFiles(AbstractSAMDataset):
         return img, np.where(mask > 0, 1, 0), prompt
     
     def __len__(self):
-        return len(self.images) * self.nb_combinations
+        return len(self.images) * self.nb_combinations # * by nb combinations because this is a data augmentation trick
 
 
 def filter_dataset(file_name, datasets : list):

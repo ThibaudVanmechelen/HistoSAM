@@ -11,6 +11,17 @@ def experiment_loose_masks(dataset : AbstractSAMDataset,
                            iterations_list : List[int],
                            combined_parameters : bool
                            ):
+    """
+    Function to explore which parameters should be used for the loose masks.
+
+    Args:
+        dataset (AbstractSAMDataset): the dataset.
+        truth_mask_list (List[np.ndarray]): the list of truth masks for that dataset.
+        looseness_list (List[int]): levels of looseness to be tested.
+        noise_level_list (List[int]): noise levels to be tested.
+        iterations_list (List[int]): how many times the morphological operations should be performed.
+        combined_parameters (bool): whether the parameters should be combined when testing.
+    """
     for i, truth_mask in enumerate(truth_mask_list):
         if combined_parameters:
             fig, axes = plt.subplots(1, 1, figsize = (5, 5))

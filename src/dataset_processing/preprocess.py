@@ -4,7 +4,15 @@ import torch
 from typing import Union
 
 def collate_fn(batch : list[tuple[dict, np.ndarray]]):
-    """Collate function for torch DataLoader. To use when creating a DataLoader"""
+    """
+    Collate function for the torch DataLoader.
+
+    Args:
+        batch (list[tuple[dict, np.ndarray]]): list of data to batch
+
+    Returns:
+        (list, Tensor): batched data, in the form (data, mask)
+    """
     batched_data = []
     batched_mask = []
 
@@ -15,8 +23,20 @@ def collate_fn(batch : list[tuple[dict, np.ndarray]]):
     return batched_data, torch.from_numpy(np.array(batched_mask))
 
 def to_dict(img : Union[np.ndarray, dict], prompts : dict[str, np.ndarray], use_img_embeddings : bool = False, device : str = 'cuda', is_sam2_prompt : bool = False) -> dict:
-    """Convert an element from an AbstractSAMDataset to a valid dictionnary regarding 
-    Sam class forward method specification."""
+    """
+    Convert an element from an AbstractSAMDataset to a valid dictionnary regarding 
+    Sam class or Sam2 class forward method specification.
+
+    Args:
+        img (Union[np.ndarray, dict]): the image (or embedding of that image)
+        prompts (dict[str, np.ndarray]): the prompts for that image
+        use_img_embeddings (bool, optional): whether the image is an embedding or not. Defaults to False.
+        device (str, optional): the device to which the data must be transfered. Defaults to 'cuda'.
+        is_sam2_prompt (bool, optional): boolean to tell if the formatting should be for sam or sam2 regarding the prompt. Defaults to False.
+
+    Returns:
+        dict: the formatted input to give to the model.
+    """
     if use_img_embeddings:
         if isinstance(img, dict):
             processed_img = {k: v.to(device) if hasattr(v, "to") else v for k, v in img.items()}

@@ -15,6 +15,14 @@ from .save_img_embeddings import save_embeddings
 from .save_img_embeddings import compute_embeddings_histo_sam
 
 def file_verification(dataset_path, is_post_processing):
+    """
+    Function to verify if the dataset is 'in order' meaning that
+    it does not already contain embeddings etc...
+
+    Args:
+        dataset_path (str): path to the dataset.
+        is_post_processing (bool): whether the dataset should contain embeddings.
+    """
     files_pre = {"mask.jpg", "img.jpg"}
     no_files_pre = {"prompt.pt", "img_embedding.pt", "sam2_img_embedding.pt"}
     files_post = {"mask.jpg", "img.jpg", "prompt.pt", "img_embedding.pt", "sam2_img_embedding.pt"}
@@ -60,6 +68,15 @@ def file_verification(dataset_path, is_post_processing):
 
 
 def run_embeddings(dataset_path : str, config_path : str, checkpoint_path_sam : str, checkpoint_path_sam2 : str):
+    """
+    Function to generate all the embeddings for a dataset.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path_sam (str): path to the sam checkpoint.
+        checkpoint_path_sam2 (str):path to the sam2 checkpoint.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -80,6 +97,20 @@ def run_embeddings(dataset_path : str, config_path : str, checkpoint_path_sam : 
 
 def run_finetuning(training_dataset_path : str, validation_dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool,
                    is_original_sam_loss: bool, output_dir_path : str, finetuning_name : str, use_dataset: list[bool]):
+    """
+    Function to perform the finetuning of a model (Sam or Sam2).
+
+    Args:
+        training_dataset_path (str): path to the training dataset.
+        validation_dataset_path (str): path to the validation dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether we finetune sam or sam2.
+        is_original_sam_loss (bool): whether we use the original loss.
+        output_dir_path (str): path to the output directory.
+        finetuning_name (str): name of the finetuned model.
+        use_dataset (list[bool]): which datasets should be used.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -99,6 +130,19 @@ def run_finetuning(training_dataset_path : str, validation_dataset_path : str, c
 
 
 def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool], last_model_path : str = None):
+    """
+    Function to test the finetuned model.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether we test sam or sam2.
+        output_dir_path (str): path to the output directory.
+        testing_name (str): name of the file generated.
+        use_dataset (list[bool]): which datasets should be used.
+        last_model_path (str, optional): path for the weights to load. Defaults to None.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -158,6 +202,19 @@ def run_finetuning_testing(dataset_path : str, config_path : str, checkpoint_pat
 
 
 def run_finetuning_testing_per_prompt(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool], last_model_path : str = None):
+    """
+    Function to test the finetuned model, but gives back the metrics separated by prompt type.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether we test sam or sam2.
+        output_dir_path (str): path to the output directory.
+        testing_name (str): name of the file generated.
+        use_dataset (list[bool]): which datasets should be used.
+        last_model_path (str, optional): path for the weights to load. Defaults to None.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -225,6 +282,19 @@ def run_finetuning_testing_per_prompt(dataset_path : str, config_path : str, che
 
 
 def run_recirculation_testing(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, use_dataset : list[bool], last_model_path : str = None):
+    """
+    Function to test the finetuned model, but here we recirculate the masks.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether we test sam or sam2.
+        output_dir_path (str): path to the output directory.
+        testing_name (str): name of the file generated.
+        use_dataset (list[bool]): which datasets should be used.
+        last_model_path (str, optional): path for the weights to load. Defaults to None.
+    """    
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -284,6 +354,18 @@ def run_recirculation_testing(dataset_path : str, config_path : str, checkpoint_
 
 
 def run_mask_distribution_experiment(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, testing_name : str, last_model_path : str = None):
+    """
+    Function to run experiment to see if the mask distribution influences the performances.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether we test sam or sam2.
+        output_dir_path (str): path to the output directory.
+        testing_name (str): name of the file generated.
+        last_model_path (str, optional): path for the weights to load. Defaults to None.
+    """      
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -362,6 +444,19 @@ def run_mask_distribution_experiment(dataset_path : str, config_path : str, chec
 
 def run_finetuning_histoSAM(training_dataset_path : str, validation_dataset_path : str, config_path : str, checkpoint_paths : list[str],
                    is_original_sam_loss: bool, output_dir_path : str, finetuning_name : str, use_dataset: list[bool]):
+    """
+    Function to finetune histoSAM model.
+
+    Args:
+        training_dataset_path (str): path to the training dataset.
+        validation_dataset_path (str): path to the validation dataset.
+        config_path (str): path to the config.
+        checkpoint_paths (list[str]): list of checkpoints for the model. Must have size 2, 0 = SAM, 1 = Histo encoder
+        is_original_sam_loss (bool): whether to use the original loss of sam.
+        output_dir_path (str): path to the output directory.
+        finetuning_name (str): name of the finetuned model.
+        use_dataset (list[bool]): which datasets should be used.
+    """
     print("Loading the config...")
     config = load_config(config_path)
 
@@ -380,6 +475,23 @@ def run_finetuning_histoSAM(training_dataset_path : str, validation_dataset_path
 def run_finetuning_testing_histoSAM(dataset_path : str, config_path : str, checkpoint_paths : list[str], output_dir_path : str, 
                                     testing_name : str, use_dataset : list[bool], last_model_path : str, encoder_type : str, deconv : bool,
                                     fuse_with_attention : bool = False, refine_with_attention : bool = False, sam_weights_for_refinement : str = None):
+    """
+    Function to test the finetuned histoSAM model.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_paths (list[str]): list of checkpoints for the model. Must have size 2, 0 = SAM, 1 = Histo encoder
+        output_dir_path (str): path to the output directory.
+        testing_name (str): name of the testing files.
+        use_dataset (list[bool]): which datasets should be used.
+        last_model_path (str): path to the trained weights.
+        encoder_type (str): type of the encoder.
+        deconv (bool): whether to use deconv or efficient upsampling.
+        fuse_with_attention (bool, optional): whether to fuse with attention. Defaults to False.
+        refine_with_attention (bool, optional): wehter to refine with attention. Defaults to False.
+        sam_weights_for_refinement (str, optional): path to the weights for refinement if need to refine. Defaults to None.
+    """
     print("Loading the config...")
     config = load_config(config_path)
 

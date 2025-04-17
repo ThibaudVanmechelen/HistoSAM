@@ -23,6 +23,18 @@ from utils.save_scores import save_scores
 IMG_RESOLUTION = 1024
 
 def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpoint_path : str, is_sam2 : bool): # config format should be based on prompting evaluation format
+    """
+    Function to evaluate a SAM/SAM2 model using a config file.
+
+    Args:
+        config (dict): the config file.
+        dataset_path (str): path to the dataset.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether to use sam or sam2 for evaluation.
+
+    Returns:
+        dict: the scores.
+    """
     prompt_type = {
                    'points' : config.prompting_evaluation.points, 
                    'box' : config.prompting_evaluation.box, 
@@ -69,6 +81,24 @@ def evaluate_standard_SAM_with_config(config : dict, dataset_path : str, checkpo
 def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint_paths : list[str], use_dataset : list[bool], model_weight_path : str, 
                                    encoder_type : str, deconv : bool, fuse_with_attention : bool = False, refine_with_attention : bool = False,
                                    sam_weights_for_refinement : str = None):
+    """
+    Function to evaluate a histoSAM model using a config file.
+
+    Args:
+        config (dict): the config file.
+        dataset_path (str): path to the dataset.
+        checkpoint_paths (list[str]): list of checkpoints for the model. Must have size 2, 0 = SAM, 1 = Histo encoder
+        use_dataset (list[bool]): which datasets to use.
+        model_weight_path (str): path to the model weights if preload special weights.
+        encoder_type (str): type of the encoder that is used.
+        deconv (bool): whether to use deconv or efficient upsampling.
+        fuse_with_attention (bool, optional): whether to fuse with attention. Defaults to False.
+        refine_with_attention (bool, optional): wehter to refine with attention. Defaults to False.
+        sam_weights_for_refinement (str, optional): path to the weights for refinement if need to refine. Defaults to None.
+
+    Returns:
+        dict: the scores.
+    """
     prompt_type = {
                 'points' : config.prompting_evaluation.points, 
                 'box' : config.prompting_evaluation.box, 
@@ -136,6 +166,17 @@ def evaluate_histo_SAM_with_config(config : dict, dataset_path : str, checkpoint
 
 
 def evaluate_SAM_iteratively(configs : list[dict], dataset_path : str, checkpoint_paths : list[str], is_sam2 : bool, output_dirs : list[(str, str)]): # config format should be based on prompting evaluation format
+    """
+    Function to evaluate several SAM/SAM2 models using a config file.
+    Here it is ensured that the same prompts will be reuse for each evaluation of the different models.
+
+    Args:
+        configs (list[dict]): list of configs for the models
+        dataset_path (str): path to the dataset.
+        checkpoint_paths (list[str]): list of paths to the checkpoints.
+        is_sam2 (bool): whether we evaluate sam2 or sam models.
+        output_dirs (list[): list of paths and names to save the scores.
+    """
     prompt_type = {
                    'points' : configs[0].prompting_evaluation.points,  # all configs should use the same prompts
                    'box' : configs[0].prompting_evaluation.box, 
@@ -187,6 +228,19 @@ def evaluate_SAM_iteratively(configs : list[dict], dataset_path : str, checkpoin
 
 
 def evaluate_without_prompts(dataset_path : str, checkpoint_path : str, is_sam2 : bool, model_type : str, device : str):
+    """
+    Function to evaluate a SAM/SAM2 model using automatic prompting.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether to use sam or sam2 for evaluation.
+        model_type (str): type of the sam/sam2 model to consider (vit_b, vit_l, ...).
+        device (str): device where to perform the eval.
+
+    Returns:
+        dict: the scores.
+    """
     prompt_type = {
                    'points' : False, 
                    'box' : False, 
@@ -228,14 +282,21 @@ def evaluate_without_prompts(dataset_path : str, checkpoint_path : str, is_sam2 
     return scores
 
 
-def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, is_original_loss : bool = False, is_histoSAM : bool = False) -> dict:
-    """Function to evaluate a model on a dataloader.
+def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda', input_mask_eval : bool = False, 
+              is_original_loss : bool = False, is_histoSAM : bool = False) -> dict:
+    """
+    Function to evaluate a model on a dataloader.
+
     model: nn.Module, model to evaluate
     dataloader: DataLoader, dataloader to use for the evaluation
     device: str, device to use for the evaluation
     input_mask_eval: bool, if True, evaluate the input mask too
-    return_mean: bool, if True, return the mean of the evaluation metrics
-    Returns: dict, dictionary with the evaluation metrics"""
+    is_original_loss: whether the model was trained using its original loss.
+    is_histoSAM: whether the model evaluated is histoSAM.
+
+
+    Returns: dict, dictionary with the evaluation metrics
+    """
     scores = {
         'total_loss': [], 'focal_loss': [], 'dice_loss': [], 'iou_loss': [],
         'dice': [], 'iou': [], 'precision': [], 'recall': [], 
@@ -332,6 +393,25 @@ def eval_loop(model : nn.Module, dataloader : DataLoader, device : str = 'cuda',
 def test_loop(model: torch.nn.Module, dataloader: DataLoader, device: str = 'cuda', input_mask_eval: bool = False, return_mean: bool = True,
               use_automatic_predictor: bool = False, is_sam2: bool = False, is_eval_post_processing : bool = False, do_post_process : bool = False,
               post_process_type : str = 'standard', do_recirculation : bool = False) -> dict:
+    """
+    Function to test a model on a dataloader.
+
+    Args:
+        model (torch.nn.Module): the model to test.
+        dataloader (DataLoader): the dataloader on which we test.
+        device (str, optional): the device on which we test. Defaults to 'cuda'.
+        input_mask_eval (bool, optional): whether we evaluate the input mask too. Defaults to False.
+        return_mean (bool, optional): whether we return the mean. Defaults to True.
+        use_automatic_predictor (bool, optional): whether we use the automatic predictor. Defaults to False.
+        is_sam2 (bool, optional): whether we are testing sam or sam2. Defaults to False.
+        is_eval_post_processing (bool, optional): whether we need to evaluate postprocessing metrics. Defaults to False.
+        do_post_process (bool, optional): whether we need to perform postprocessing. Defaults to False.
+        post_process_type (str, optional): postprocessing type to perform. Defaults to 'standard'.
+        do_recirculation (bool, optional): whether we try to give back one time the output mask to SAM to improve. Defaults to False.
+
+    Returns:
+        dict: the scores.
+    """
     scores = {
         'dice': [], 'iou': [], 'precision': [], 'recall': [],
         'dice_input': [], 'iou_input': [], 'precision_input': [], 'recall_input': [],

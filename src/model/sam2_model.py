@@ -27,13 +27,30 @@ from utils.post_processing import post_process_segmentation_mask, post_process_w
 IMG_RESOLUTION = 1024
 
 class TrainableSAM2(SAM2ImagePredictor):
-    """A trainable version of Sam2.
-    Note: you could add a parameter to also train the image encoder using: self.model.image_encoder.train(True) but the corresponding file in SAM2 repository contains multiple no_grad
-    instructions which need to be removed, thus i did not include it in the following code since I don't want to train the image encoder and removing those statements would slow the whole
-    training down by computing unnecessary gradients.
-    """
     def __init__(self, finetuned_model_name : str, cfg : str, checkpoint : str, mode : str,
-                 do_train_prompt_encoder : bool, do_train_mask_decoder : bool, img_embeddings_as_input : bool, device : str, weight_path : str = None):
+                 do_train_prompt_encoder : bool, do_train_mask_decoder : bool, img_embeddings_as_input : bool, 
+                 device : str, weight_path : str = None):
+        """
+        A trainable version of Sam2.
+
+        Note: you could add a parameter to also train the image encoder using: 
+        self.model.image_encoder.train(True) but the corresponding file in SAM2 
+        repository contains multiple no_grad instructions which need to be removed, 
+        thus i did not include it in the following code since I don't want to train 
+        the image encoder and removing those statements would slow the whole training 
+        down by computing unnecessary gradients.
+
+        Args:
+            finetuned_model_name (str): name for the finetuned model.
+            cfg (str): path to the config file for SAM2.
+            checkpoint (str): path to the checkpoint.
+            mode (str): mode of the model (eval, train, etc, ...), only using eval makes a difference in the code.
+            do_train_prompt_encoder (bool): whether to train the prompt encoder.
+            do_train_mask_decoder (bool): whether to train the mask decoder.
+            img_embeddings_as_input (bool): whether the model receives img embeddings as input instead of images.
+            device (str): the device.
+            weight_path (str, optional): path to the weights. Defaults to None.
+        """
         model = build_sam2(config_file = cfg,  ckpt_path = checkpoint, device = device, mode = mode,  apply_postprocessing = True) # Note: mode is only really useful when using eval, otherwise does not do anything: https://github.com/facebookresearch/sam2/blob/main/sam2/build_sam.py
         super().__init__(model)
 
@@ -54,6 +71,12 @@ class TrainableSAM2(SAM2ImagePredictor):
             self.model.sam_mask_decoder.train(True)
     
     def load_embedding_to_model(self, data : list[dict]):
+        """
+        Method to load embeddings into the model structure when we do not use images directly.
+
+        Args:
+            data (list[dict]): the data, similar structure to model.py
+        """
         self._orig_hw = []
         image_embeds = []
         high_res_feats = []
@@ -77,6 +100,15 @@ class TrainableSAM2(SAM2ImagePredictor):
         self._features = {"image_embed": batched_image_embed, "high_res_feats": batched_high_res_feats}
     
     def convert_img_from_sam_to_sam2_format(self, sam_image : torch.Tensor) -> np.ndarray:
+        """
+        Convert image that was structured for SAM into one structured for SAM2.
+
+        Args:
+            sam_image (torch.Tensor): the image.
+
+        Returns:
+            np.ndarray: the processed image.
+        """
         img_np = sam_image.cpu().numpy() if sam_image.device.type == "cuda" else sam_image.numpy() # image is 3xHxW
         img_np = np.transpose(img_np, (1, 2, 0)) # image becomes HxWx3
         
@@ -88,6 +120,16 @@ class TrainableSAM2(SAM2ImagePredictor):
         return img_np
     
     def convert_prompts_from_sam_to_sam2_format(self, record : dict) -> dict: # Note: kind of legacy code, changed it multiple times, now more than a place holder than anything
+        """
+        Function to convert a prompt dict in sam format to sam2 format.
+        Kind of a legacy function, i modified the code and it is not really useful anymore.
+
+        Args:
+            record (dict): the prompt.
+
+        Returns:
+            dict: the formatted prompt.
+        """
         sam2_prompts = {'point_coords': None, 'point_labels': None, 'boxes': None, 'mask_inputs': None}
         
         sam2_prompts['point_coords'] = record.get('point_coords', None)
@@ -98,6 +140,15 @@ class TrainableSAM2(SAM2ImagePredictor):
         return sam2_prompts
         
     def convert_batch_prompts_from_sam_to_sam2_format(self, data : list[dict]) -> dict:
+        """
+        Function to convert a batch of prompt dict in sam format to sam2 format.
+
+        Args:
+            record (list[dict]): the prompt batch.
+
+        Returns:
+            dict: the formatted prompts batched in a single dict.
+        """
         sam2_prompts = {'point_coords': [], 'point_labels': [], 'boxes': [], 'mask_inputs': []}
 
         for item in data:
@@ -112,7 +163,21 @@ class TrainableSAM2(SAM2ImagePredictor):
 
         return sam2_prompts
     
-    def train_model(self, config : dict, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]):
+    def train_model(self, config : dict, training_dataset_path : str, validation_dataset_path : str, 
+                    use_original_sam_loss : bool, use_dataset : list[bool]):
+        """
+        Function to train/finetune the SAM2 model.
+
+        Args:
+            config (dict): the config for the finetuning.
+            training_dataset_path (str): path to the training dataset.
+            validation_dataset_path (str): path to the validation dataset.
+            use_original_sam_loss (bool): whether to use the original SAM2 loss.
+            use_dataset (list[bool]): which datasets to use.
+
+        Returns:
+            dict: the scores.
+        """
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()) / 1e6:.2f}M")
 
         prompt_type = {
@@ -191,7 +256,25 @@ class TrainableSAM2(SAM2ImagePredictor):
     def train_loop(self, trainloader : DataLoader, epochs : int, loss_fn : callable, evalloader : DataLoader = None, 
                    model_save_dir : str = None, verbose : bool = True, use_wandb : bool = False, last_epoch : int = -1, 
                    eval_frequency : int = 1, is_original_loss : bool = False) -> dict:
-        """https://www.datacamp.com/tutorial/sam2-fine-tuning"""
+        """
+        Function for the train loop used in the finetuning process.
+        Some ideas are taken from here: https://www.datacamp.com/tutorial/sam2-fine-tuning
+
+        Args:
+            trainloader (DataLoader): the training dataloader.
+            epochs (int): number of epochs to perform.
+            loss_fn (callable): loss function to use.
+            evalloader (DataLoader, optional): the evaluation dataloader. Defaults to None.
+            model_save_dir (str, optional): path where to save the model weights and checkpoint. Defaults to None.
+            verbose (bool, optional): whether to print additional information. Defaults to True.
+            use_wandb (bool, optional): whether to use wandb for the information about the training. Defaults to False.
+            last_epoch (int, optional): last epoch of previous training if we restart the finetuning. Defaults to -1.
+            eval_frequency (int, optional): frequency of the evaluation. Defaults to 1.
+            is_original_loss (bool, optional): whether we use the original loss (for storing purpose in wandb). Defaults to False.
+
+        Returns:
+            dict: the scores.
+        """
         best_loss = float('inf')
 
         scores = {
@@ -436,6 +519,17 @@ class TrainableSAM2(SAM2ImagePredictor):
         return scores
     
     def eval_loop(self, dataloader : DataLoader, input_mask_eval : bool, is_original_loss : bool = False) -> dict:
+        """
+        Evaluation loop for the validation during finetuning.
+
+        Args:
+            dataloader (DataLoader): the validation dataloader.
+            input_mask_eval (bool): whether we need to consider the input mask for evaluation.
+            is_original_loss (bool, optional): whether we use the original loss (for storing purpose in wandb). Defaults to False.
+
+        Returns:
+            dict: the scores.
+        """
         scores = {
             'total_loss': [], 'focal_loss': [], 'dice_loss': [], 'iou_loss': [], 'seg_loss': [], 'score_loss': [],
             'dice': [], 'iou': [], 'precision': [], 'recall': [], 'prediction_time': []
@@ -559,6 +653,21 @@ class TrainableSAM2(SAM2ImagePredictor):
 
     def test_loop(self, dataloader : DataLoader, input_mask_eval : bool, is_eval_post_processing : bool = False, do_post_process : bool = False, 
                   do_recirculation : bool = False, use_previous_prompts : bool = True, post_process_type : str = 'standard') -> dict:
+        """
+        Function to test the finetuned model, here we do not consider the losses at all.
+
+        Args:
+            dataloader (DataLoader): the test dataloader.
+            input_mask_eval (bool): whether to evaluate the input mask.
+            is_eval_post_processing (bool, optional): whether to eval the postprocessing metrics from metrics.py. Defaults to False.
+            do_post_process (bool, optional): whether to perform postprocessing. Defaults to False.
+            do_recirculation (bool, optional): whether to perform recirculation (giving back the mask one time to SAM2). Defaults to False.
+            use_previous_prompts (bool, optional): whether to use previous prompt for recirculation. Defaults to True.
+            post_process_type (str, optional): postprocessing type to apply. Defaults to 'standard'.
+
+        Returns:
+            dict: the scores.
+        """
         print("### Starting testing with SAM2 ! ###")
         scores = {
                 'prediction_time':[],
@@ -719,6 +828,17 @@ class TrainableSAM2(SAM2ImagePredictor):
         return scores
     
     def predict_with_recirculation(self, data : dict, use_previous_prompts : bool = False, save_dir : str = None):
+        """
+        Function to perform a prediction with one step of recirculation.
+
+        Args:
+            data (dict): the data.
+            use_previous_prompts (bool, optional): whether to use the previous prompt for recirculation. Defaults to False.
+            save_dir (str, optional): path where to save the figure for visualization. Defaults to None.
+
+        Returns:
+            the masks and scores.
+        """
         prompts_record = self.convert_prompts_from_sam_to_sam2_format(data)
         sam2_image = self.convert_img_from_sam_to_sam2_format(data['image'])
 
@@ -768,6 +888,16 @@ class TrainableSAM2(SAM2ImagePredictor):
         return final_masks, final_scores
  
     def predict_batch_with_recirculation(self, data : list[dict], use_previous_prompts : bool = False):
+        """
+        Function to perform a prediction with one step of recirculation for a batch.
+
+        Args:
+            data (list[dict]): the data batch.
+            use_previous_prompts (bool, optional): whether to use the previous prompt for recirculation. Defaults to False.
+
+        Returns:
+            the masks and scores.
+        """
         prompts_record = self.convert_batch_prompts_from_sam_to_sam2_format(data)
         sam2_image_batch = [self.convert_img_from_sam_to_sam2_format(x['image']) for x in data]
 

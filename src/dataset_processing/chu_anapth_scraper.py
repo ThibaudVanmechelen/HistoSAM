@@ -156,13 +156,3 @@ def process_dataset(config : dict):
         shutil.copy(mask_src, mask_dest)
 
     print("Done")
-
-
-if __name__ == '__main__':
-    keys = load_config('keys.toml') # this file should be hidden in your directory
-    
-    config = load_config('config.toml')
-    with Cytomine(keys['host'], keys['public_key'], keys['private_key'], verbose = logging.ERROR) as cytomine:
-        download_images(config)
-
-    process_dataset(config)

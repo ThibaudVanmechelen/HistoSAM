@@ -33,6 +33,27 @@ class HistoSAM(nn.Module):
              return_iou : bool = False,
              device : str = 'cuda'
              ):
+        """
+        Constructor of HistoSAM.
+
+        Args:
+            model_type (str): model type for SAM.
+            checkpoint_path (str): path to the SAM checkpoint.
+            hist_encoder_type (str, optional): Encoder type of the histoencoder (if used). Defaults to None.
+            hist_encoder_checkpoint_path (str, optional): path to the checkpoint of the histoencoder. Defaults to None.
+            not_use_sam_encoder (bool, optional): whether to use sam image encoder. Defaults to False.
+            embedding_as_input (bool, optional): whether the inputs are embeddings instead of images. Defaults to False.
+            up_sample_with_deconvolution (bool, optional): whether to upsample with deconv instead of efficient upsampling. Defaults to False.
+            fuse_with_attention (bool, optional): whether to merge embeddings of the 2 encoders with attention. Defaults to False.
+            refine_with_attention (bool, optional): whether to refine the mask with attention (cannot be true with fuse_with_attention). Defaults to False.
+            sam_weights_for_refinement (str, optional): path to the weights if refinement is performed. Defaults to None.
+            freeze_sam_img_encoder (bool, optional): whether to freeze the sam img encoder. Defaults to True.
+            freeze_prompt_encoder (bool, optional): whether to freeze the prompt encoder. Defaults to False.
+            freeze_mask_decoder (bool, optional): whether to freeze the mask decoder. Defaults to False.
+            resolution (Tuple[int, int], optional): resolution of the image. Defaults to (1024, 1024).
+            return_iou (bool, optional): whether to return the iou with the output mask. Defaults to False.
+            device (str, optional): device where to put the model Defaults to 'cuda'.
+        """
         super().__init__()
 
         assert model_type in ['default', 'vit_b', 'vit_l', 'vit_h'], f"Model type must be 'default', 'vit_b', 'vit_l' or 'vit_h': received {model_type}."
@@ -166,6 +187,17 @@ class HistoSAM(nn.Module):
             self.neck.to(device)
 
     def forward(self, batched_input : List[Dict[str, Any]], multimask_output : bool = True, binary_mask_output: bool = False):
+        """
+        Forward method of HistoSAM.
+
+        Args:
+            batched_input (List[Dict[str, Any]]): the batched inputs (same structure as for SAM), see model.py.
+            multimask_output (bool, optional): whether to output multiple masks. Defaults to True.
+            binary_mask_output (bool, optional): whether to binarize the masks. Defaults to False.
+
+        Returns:
+            the predicted mask as Tensor (and potentially the iou, if return_iou is True)
+        """
         if self.embedding_as_input and self.do_merge == False: # case 1: only hist_encoder is used
             hist_image_embeddings = torch.stack([x["image"] for x in batched_input], dim = 0) # Shape: B x number_patches x encoder_dim because embeddings stored as number_patches x encoder_dim
             
@@ -271,6 +303,15 @@ class HistoSAM(nn.Module):
         return outputs
     
     def get_image_embedding(self, x : dict):
+        """
+        Function to get the embeddings for one image.
+
+        Args:
+            x (dict): the dict containing the input image, same shape as input in model.py
+
+        Returns:
+            (Tensor): the embedding
+        """
         if self.do_merge == True: # case 1: both encoder are used
             input_images_sam = torch.stack([self.model.preprocess(x["image"])], dim = 0) # Shape: 1xCxHxW
             input_images_encoder = self.hist_encoder.preprocess([x["image"]]) # Shape: 1xCxHxW
@@ -290,6 +331,12 @@ class HistoSAM(nn.Module):
             return hist_image_embeddings
     
     def compute_all_img_embeddings(self, dataset : SAMDataset):
+        """
+        Function to compute all the embeddings for the images in a dataset.
+
+        Args:
+            dataset (SAMDataset): the dataset object.
+        """
         self.eval()
 
         with torch.no_grad():

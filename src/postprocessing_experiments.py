@@ -21,6 +21,20 @@ def run_postprocessing_testing(dataset_path : str,
                                use_dataset : list[bool], 
                                last_model_path : str = None,
                                post_process_type : str = 'standard'):
+    """
+    Function to run the experiment on the different post processing types.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether we test sam or sam2.
+        output_dir_path (str): path where to save the testing file.
+        testing_name (str): name of the testing file.
+        use_dataset (list[bool]): which dataset to use in dataset_path.
+        last_model_path (str, optional): path to the last model if some weights must be loaded. Defaults to None.
+        post_process_type (str, optional): which postprocessing to apply. Defaults to 'standard'.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 

@@ -1,4 +1,5 @@
 """This script allows to train a SAM model on a dataset. The dataset should be in the format of the SAM dataset."""
+
 import os
 import torch
 import wandb
@@ -20,6 +21,20 @@ from utils.loss import SAM_Loss
 from typing import Union
 
 def train_with_config(config: dict, checkpoint_path : str, training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]) -> dict:
+    """
+    Function to train SAM model from a config.
+
+    Args:
+        config (dict): the config.
+        checkpoint_path (str): path to the checkpoint.
+        training_dataset_path (str): path to the training dataset.
+        validation_dataset_path (str): path to the validation dataset.
+        use_original_sam_loss (bool): whether to use original or custom SAM loss.
+        use_dataset (list[bool]): which datasets to use from the directory.
+
+    Returns:
+        dict: the scores.
+    """
     model = load_model(checkpoint_path, config.sam.model_type, img_embeddings_as_input = config.training.use_img_embeddings, return_iou = True).to(config.misc.device)
     print(f"Model parameters: {model.get_nb_parameters(img_encoder=True) / 1e6:.2f}M")
 
@@ -109,6 +124,20 @@ def train_with_config(config: dict, checkpoint_path : str, training_dataset_path
 
 
 def train_histo_sam_with_config(config: dict, checkpoint_paths : list[str], training_dataset_path : str, validation_dataset_path : str, use_original_sam_loss : bool, use_dataset : list[bool]) -> dict:
+    """
+    Function to train HistoSAM model from a config.
+
+    Args:
+        config (dict): the config.
+        checkpoint_paths (list[str]): list of checkpoints for the model. Must have size 2, 0 = SAM, 1 = Histo encoder.
+        training_dataset_path (str): path to the training dataset.
+        validation_dataset_path (str): path to the validation dataset.
+        use_original_sam_loss (bool): whether to use original or custom SAM loss.
+        use_dataset (list[bool]): which datasets to use from the directory.
+
+    Returns:
+        dict: the scores.
+    """
     f_w_a = config.encoder.get("fuse_with_attention", False)
     r_w_a = config.encoder.get("refine_with_attention", False)
 
@@ -256,15 +285,26 @@ def train_loop(model : Union[Sam, HistoSAM], trainloader : DataLoader, optimizer
                evalloader : DataLoader = None, model_save_dir : str = None, device : str = 'cpu', verbose : bool = True, 
                use_wandb : bool = False, last_epoch : int = -1, eval_frequency : int = 1, is_original_loss : bool = False, 
                is_histoSAM : bool = False) -> dict:
-    """Function to train a model on a dataloader.
+    """
+    Function to train a model on a dataloader.
+    
     model: nn.Module, model to train
     trainloader: DataLoader, dataloader to use for the training
     optimizer: Adam, optimizer to use for the training
     epochs: int, number of epochs to train the model
+    loss_fn: loss function to use for training
     evalloader: DataLoader, If provided, evaluate the model at each epochs on it. Default: None
     model_save_dir: str, If provided, save the model at each epochs. Also save the best model (evaluation loss) if evalloader is provided. Default: None
     device: str, device to use for the training
-    Returns: dict, dictionary with the training metrics"""
+    verbose: bool, whether to print additional information
+    use_wandb: bool, whether to use wandb to send information
+    last_epoch: int, last epoch where the previous training stopped
+    eval_frequency: int, frequency at which the model is evaluated
+    is_original_loss: bool, whether to use the original loss of SAM for training
+    is_histoSAM: bool, whether we are currently training histoSAM
+
+    Returns: dict, dictionary with the training metrics
+    """
     best_loss = float('inf')
     model.return_iou = True
 

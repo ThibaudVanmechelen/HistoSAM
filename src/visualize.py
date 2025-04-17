@@ -14,6 +14,18 @@ from utils.config import load_config
 from .utils.post_processing import post_process_segmentation_mask
 
 def run_visualization(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, file_name_format: str, last_model_path : str = None):
+    """
+    Function to generate plots of the model results for visualization.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): whether to use sam or sam2.
+        output_dir_path (str): path to the output directory.
+        file_name_format (str): name of the files to save
+        last_model_path (str, optional): path to the weights to load. Defaults to None.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -65,6 +77,19 @@ def run_visualization(dataset_path : str, config_path : str, checkpoint_path : s
 
 def run_visualization_histoSAM(dataset_path : str, config_path : str, checkpoint_paths : list[str], encoder_type : str, deconv: bool, 
                                output_dir_path : str, file_name_format: str, last_model_path : str = None):
+    """
+    Function to generate plots of histoSAM results for visualization.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_paths (list[str]): list of checkpoints for the model. Must have size 2, 0 = SAM, 1 = Histo encoder
+        encoder_type (str): type of the encoder.
+        deconv (bool): whether or not to use deconvolution.
+        output_dir_path (str): path to the output directory.
+        file_name_format (str): name of the files to save.
+        last_model_path (str, optional): path to the weights to load. Defaults to None.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -121,6 +146,16 @@ def run_visualization_histoSAM(dataset_path : str, config_path : str, checkpoint
 
 
 def make_sample_figure(imgs, titles, save_path, do_save = True, do_show = False):
+    """
+    Make a figure from the result for one prediction.
+
+    Args:
+        imgs: list of images to put in the figure.
+        titles: titles for the figure.
+        save_path: path where to save the figure.
+        do_save (bool, optional): Whether to save the figure. Defaults to True.
+        do_show (bool, optional): Whether to plot the figure. Defaults to False.
+    """
     _, axes = plt.subplots(1, len(imgs), figsize = (len(imgs) * 5, 5))
 
     for i, ax in enumerate(axes):
@@ -140,6 +175,19 @@ def make_sample_figure(imgs, titles, save_path, do_save = True, do_show = False)
 
 
 def test_on_sample(model, dataset : SAMDataset, is_sam2 : bool, output_dir_path : str, file_name_format : str, nb_sample : int, device : str, seed : int = 42):
+    """
+    Function to perform the visualization on a few samples.
+
+    Args:
+        model: the model.
+        dataset (SAMDataset): the dataset.
+        is_sam2 (bool):  whether to use sam or sam2.
+        output_dir_path (str): path to the output directory.
+        file_name_format (str): name of the files to save.
+        nb_sample (int): the number of samples we want to visualize.
+        device (str): the device where computation occurs.
+        seed (int, optional): the seed. Defaults to 42.
+    """
     random.seed(seed)
     samples_idx = random.sample(range(len(dataset)), nb_sample)
 
@@ -226,6 +274,17 @@ def test_on_sample(model, dataset : SAMDataset, is_sam2 : bool, output_dir_path 
 
 
 def run_sample_post_processing(input_directory : str, output_directory : str, opening_kernel_size : int = 10, closing_kernel_size : int = 20, blur_size : int = 21, do_gaussian_blur : bool = True):
+    """
+    Function to visualize postprocessed masks.
+
+    Args:
+        input_directory (str): path where to find the original masks.
+        output_directory (str): path where to save the imgs.
+        opening_kernel_size (int, optional): size of the opening kernel. Defaults to 10.
+        closing_kernel_size (int, optional): size of the closing kernel. Defaults to 20.
+        blur_size (int, optional): size of the blur. Defaults to 21.
+        do_gaussian_blur (bool, optional): whether to apply blur. Defaults to False.
+    """
     for f in sorted(os.listdir(input_directory)):
         if f.startswith("gt_") and f.endswith(".npy"):
             idx = f.split("_")[1].split(".")[0]
@@ -250,6 +309,18 @@ def run_sample_post_processing(input_directory : str, output_directory : str, op
                 
 
 def run_sample_with_recirculation(dataset_path : str, config_path : str, checkpoint_path : str, output_dir_path : str, last_model_path : str = None, seed : int = 42, nb_sample : int = 10):      
+    """
+    Function to visualize masks with recirculation.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path to the output directory.
+        last_model_path (str, optional): path to the weights to load. Defaults to None.
+        seed (int, optional): the seed. Defaults to 42.
+        nb_sample (int, optional): the number of samples we want to visualize.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -302,6 +373,19 @@ def run_sample_with_recirculation(dataset_path : str, config_path : str, checkpo
 
 
 def run_sample_with_mask_distribution(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, last_model_path : str = None, seed : int = 42, nb_sample : int = 10):
+    """
+    Function to run visualization of the experiment where we change the mask distribution.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        is_sam2 (bool): _whether to use sam or sam2.
+        output_dir_path (str): path to the output directory.
+        last_model_path (str, optional): path to the weights to load. Defaults to None.
+        seed (int, optional): the seed. Defaults to 42.
+        nb_sample (int, optional): the number of samples we want to visualize.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 

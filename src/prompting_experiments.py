@@ -4,6 +4,16 @@ from utils.save_scores import save_scores
 from .evaluate import evaluate_standard_SAM_with_config, evaluate_without_prompts, evaluate_SAM_iteratively
 
 def run_experiment_points(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
+    """
+    Function to run the experiment on prompting with points.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+    """
     print("Loading the configs")
     config_1_point = load_config(os.path.join(config_dir_path, "prompting_1_point.toml"))
     config_5_point = load_config(os.path.join(config_dir_path, "prompting_5_point.toml"))
@@ -18,6 +28,16 @@ def run_experiment_points(dataset_path : str, config_dir_path : str, checkpoint_
 
 
 def run_experiment_box_with_points(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
+    """
+    Function to run the experiment on prompting with points and boxes.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+    """
     print("Loading the configs")
     config_box = load_config(os.path.join(config_dir_path, "prompting_box.toml"))
     config_box_1_point = load_config(os.path.join(config_dir_path, "prompting_box_1_point_pos.toml"))
@@ -37,6 +57,16 @@ def run_experiment_box_with_points(dataset_path : str, config_dir_path : str, ch
 
 
 def run_experiment_box_with_neg_points(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
+    """
+    Function to run the experiment on prompting with neg points and boxes.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+    """
     print("Loading the configs")
     config_box_1_point_in = load_config(os.path.join(config_dir_path, "prompting_box_1_point_neg_in.toml"))
     config_box_5_point_in = load_config(os.path.join(config_dir_path, "prompting_box_5_point_neg_in.toml"))
@@ -61,6 +91,16 @@ def run_experiment_box_with_neg_points(dataset_path : str, config_dir_path : str
 
 
 def run_experiment_mask(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
+    """
+    Function to run the experiment on prompting with masks.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+    """
     print("Loading the configs")
     config_gt = load_config(os.path.join(config_dir_path, "prompting_mask_ground_truth.toml"))
     config_scribble = load_config(os.path.join(config_dir_path, "prompting_mask_scribble.toml"))
@@ -85,6 +125,16 @@ def run_experiment_mask(dataset_path : str, config_dir_path : str, checkpoint_pa
 
 
 def run_experiment_mask_with_basic_prompts(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
+    """
+    Function to run the experiment on prompting with masks with some basic prompts.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+    """
     print("Loading the configs")
     config_1_point_pos = load_config(os.path.join(config_dir_path, "prompting_mask_1_point_pos.toml"))
     config_5_point_pos = load_config(os.path.join(config_dir_path, "prompting_mask_5_point_pos.toml"))
@@ -114,6 +164,16 @@ def run_experiment_mask_with_basic_prompts(dataset_path : str, config_dir_path :
 
 
 def run_experiment_all_prompts(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
+    """
+    Function to run the experiment on prompting with all prompts.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+    """
     print("Loading the configs")
     config_point_pos = load_config(os.path.join(config_dir_path, "prompting_mask_box_point_pos.toml"))
     config_point_neg = load_config(os.path.join(config_dir_path, "prompting_mask_box_point_neg.toml"))
@@ -133,6 +193,15 @@ def run_experiment_all_prompts(dataset_path : str, config_dir_path : str, checkp
 
 
 def run_experiment_encoders_sam(dataset_path : str, config_dir_path : str, checkpoints : list[str], output_dir_path : str):
+    """
+    Function to run the experiment on prompting with the different encoders for sam.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoints (list[str]): list of the various checkpoints.
+        output_dir_path (str): path where to save the testing file.
+    """
     print("Loading the configs")
     config_vit_h = load_config(os.path.join(config_dir_path, "prompting_vit_h.toml"))
     config_vit_l = load_config(os.path.join(config_dir_path, "prompting_vit_l.toml"))
@@ -150,6 +219,15 @@ def run_experiment_encoders_sam(dataset_path : str, config_dir_path : str, check
 
 
 def run_experiment_encoders_sam2(dataset_path : str, config_dir_path : str, checkpoints : list[str], output_dir_path : str):
+    """
+    Function to run the experiment on prompting with the different encoders for sam2.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        config_dir_path (str): path to the config.
+        checkpoints (list[str]): list of the various checkpoints.
+        output_dir_path (str): path where to save the testing file.
+    """
     print("Loading the configs")
     config_hiera_t = load_config(os.path.join(config_dir_path, "prompting_hiera_t.toml"))
     config_hiera_s = load_config(os.path.join(config_dir_path, "prompting_hiera_s.toml"))
@@ -169,6 +247,16 @@ def run_experiment_encoders_sam2(dataset_path : str, config_dir_path : str, chec
 
 
 def run_experiment_datasets(config_path : str, dataset_paths : list[str], checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
+    """
+    Function to run the experiment on prompting on the various datasets.
+
+    Args:
+        config_path (str): path to the config.
+        dataset_paths (list[str]): list of paths to the datasets.
+        checkpoint_path (str): path to the checkpoint.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+    """
     print("Loading the configs")
     config = load_config(config_path)
 
@@ -182,6 +270,16 @@ def run_experiment_datasets(config_path : str, dataset_paths : list[str], checkp
 
 
 def run_experiment_no_prompts(dataset_path : str, model_config : list[(str, str)], output_dir_path : str, is_sam2 : bool, device : str):
+    """
+    Function to run the experiment with automatic prompting.
+
+    Args:
+        dataset_path (str): path to the dataset.
+        model_config (list[(str, str)]): list of the different model configs.
+        output_dir_path (str): path where to save the testing file.
+        is_sam2 (bool): whether we test sam or sam2.
+        device (str): the device to run on.
+    """
     for cfg in model_config:
         checkpoint_path = cfg[0]
         model_type = cfg[1]

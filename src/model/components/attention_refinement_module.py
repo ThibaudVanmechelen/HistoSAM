@@ -1,7 +1,18 @@
+"""File to define the attention module that is used to refine the mask at the output of the HistoSAM model."""
+
 import torch.nn as nn
 
 class AttentionRefinementModule(nn.Module):
     def __init__(self, mask_channels, hist_dim, hidden_dim = 256, num_heads = 8):
+        """
+        Constructor for the module.
+
+        Args:
+            mask_channels (int): the number of channels of the masks given as input.
+            hist_dim (int): _the dimension of the embedding provided by the domain encoder.
+            hidden_dim (int, optional): the number of dimensions to output. Defaults to 256 (to be compatible with the original size used in SAM).
+            num_heads (int, optional): the number of head to be used for the MultiheadAttention. Defaults to 8.
+        """
         super().__init__()
         self.hidden_dim = hidden_dim
 
@@ -16,6 +27,16 @@ class AttentionRefinementModule(nn.Module):
         )
 
     def forward(self, low_res_masks, hist_embeddings):
+        """
+        Forwarding function for this module.
+
+        Args:
+            low_res_masks (Tensor): the low resolution masks given by SAM.
+            hist_embeddings (Tensor): the embeddings of the image given by the domain encoder.
+
+        Returns:
+            Tensor: the refined low resolution masks.
+        """
         B, _, H, W = low_res_masks.shape
 
         query = self.query_conv(low_res_masks) # Shape: B x 256 x 256 x 256
