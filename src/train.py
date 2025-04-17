@@ -8,7 +8,7 @@ from dataset_processing.dataset import (
     filter_dataset,
 )
 from dataset_processing.preprocess import collate_fn
-from .evaluate import eval_loop
+from evaluate import eval_loop
 from model.model import load_model
 from model.histo_sam import HistoSAM
 from segment_anything.modeling.sam import Sam

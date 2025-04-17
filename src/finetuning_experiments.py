@@ -3,16 +3,16 @@ import gc
 import torch
 
 from torch.utils.data import DataLoader
-from .train import train_with_config, train_histo_sam_with_config
+from train import train_with_config, train_histo_sam_with_config
 from model.sam2_model import TrainableSAM2
 from model.model import load_model
 from dataset_processing.dataset import SamDatasetFromFiles, filter_dataset, SAMDataset
 from dataset_processing.preprocess import collate_fn
-from .evaluate import test_loop, evaluate_histo_SAM_with_config
+from evaluate import test_loop, evaluate_histo_SAM_with_config
 from utils.config import load_config
 from utils.save_scores import save_scores
-from .save_img_embeddings import save_embeddings
-from .save_img_embeddings import compute_embeddings_histo_sam
+from save_img_embeddings import save_embeddings
+from save_img_embeddings import compute_embeddings_histo_sam
 
 def file_verification(dataset_path, is_post_processing):
     """

@@ -55,19 +55,17 @@ prompt_toolkit==3.0.48
 protobuf==5.29.0
 psutil==5.9.0
 pure_eval==0.2.3
-pydensecrf==1.0
 Pygments==2.18.0
 pyparsing==3.2.0
 python-box==7.1.1
 python-dateutil==2.9.0.post0
-pywin32==305.1
 PyYAML==6.0.2
 pyzmq==25.1.2
 requests==2.32.3
 requests-toolbelt==1.0.0
 safetensors==0.5.2
--e git+https://github.com/facebookresearch/sam2.git@722d1d15111c689908aeeb82d49a57780aac5153#egg=sam2
-scikit-learn==1.5.2
+-e git+https://github.com/facebookresearch/sam2.git@722d1d15111c689908aeeb82d49a57780aac5153#egg=sam-2
+scikit-learn==1.6.1
 scipy==1.13.1
 segment-anything==1.0
 segmentation-refinement==0.6
@@ -93,3 +91,4 @@ wandb==0.18.7
 wcwidth==0.2.13
 wheel==0.44.0
 zipp==3.21.0
+git+https://github.com/lucasb-eyer/pydensecrf.git

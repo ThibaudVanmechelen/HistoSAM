@@ -8,11 +8,11 @@ from segment_anything import sam_model_registry
 from segment_anything.modeling.common import LayerNorm2d
 from dataset_processing.dataset import SAMDataset
 
-from components.histo_encoder import get_histo_encoder
-from components.custom_fusion_sam import fusion_sam_model_registry
-from components.upsample import DeconvolutionUpSampler, InterpolationUpSampler
-from components.cross_attention_fusion import CrossAttentionFusionModule
-from components.attention_refinement_module import AttentionRefinementModule
+from .components.histo_encoder import get_histo_encoder
+from .components.custom_fusion_sam import fusion_sam_model_registry
+from .components.upsample import DeconvolutionUpSampler, InterpolationUpSampler
+from .components.cross_attention_fusion import CrossAttentionFusionModule
+from .components.attention_refinement_module import AttentionRefinementModule
 
 class HistoSAM(nn.Module):
     def __init__(self, 

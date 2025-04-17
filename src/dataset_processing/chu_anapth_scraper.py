@@ -1,13 +1,11 @@
 """Downloads ROI from images from a specific Cytomine project"""
 
-import logging
 import os
 import shutil
 from math import floor
 from queue import Queue
 
 import matplotlib.pyplot as plt
-from cytomine import Cytomine
 from cytomine.models import (
     AnnotationCollection,
     ImageInstance,
@@ -16,8 +14,6 @@ from cytomine.models import (
 )
 from shapely import wkt
 from tqdm import tqdm
-
-from ..utils.config import load_config
 
 
 def get_roi(img : ImageInstance, config : dict) -> AnnotationCollection:

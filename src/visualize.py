@@ -11,7 +11,7 @@ from model.model import load_model
 from model.histo_sam import HistoSAM
 from dataset_processing.dataset import SAMDataset
 from utils.config import load_config
-from .utils.post_processing import post_process_segmentation_mask
+from utils.post_processing import post_process_segmentation_mask
 
 def run_visualization(dataset_path : str, config_path : str, checkpoint_path : str, is_sam2 : bool, output_dir_path : str, file_name_format: str, last_model_path : str = None):
     """

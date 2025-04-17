@@ -7,7 +7,7 @@ from model.sam2_model import TrainableSAM2
 from model.model import load_model
 from dataset_processing.dataset import SamDatasetFromFiles, filter_dataset
 from dataset_processing.preprocess import collate_fn
-from .evaluate import test_loop
+from evaluate import test_loop
 from utils.config import load_config
 from utils.save_scores import save_scores
 

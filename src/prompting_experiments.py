@@ -1,7 +1,7 @@
 import os
 from utils.config import load_config
 from utils.save_scores import save_scores
-from .evaluate import evaluate_standard_SAM_with_config, evaluate_without_prompts, evaluate_SAM_iteratively
+from evaluate import evaluate_standard_SAM_with_config, evaluate_without_prompts, evaluate_SAM_iteratively
 
 def run_experiment_points(dataset_path : str, config_dir_path : str, checkpoint_path : str, output_dir_path : str, is_sam2 : bool):
     """
